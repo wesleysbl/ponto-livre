@@ -1,0 +1,44 @@
+# ---------------------------------------------------------------------------
+# A volta ao app nas rotas do app, para o Cloudflare Pages e o Netlify.
+#
+# POR QUE EXISTE
+# O app é uma página só (`index.html`) que desenha cada tela no navegador. Quem
+# abre `/espelho` direto, dá F5 em `/painel/<id>` ou volta pelo ícone numa tela
+# de dentro pede ao servidor um arquivo que não existe. Cada linha abaixo
+# responde a esse pedido com a página do app, com status 200 e sem mudar o
+# endereço (é uma reescrita, não um redirecionamento), e o app abre na tela
+# certa. A raiz (`/`) não precisa de linha: ela já é o `index.html`.
+#
+# POR QUE O DESTINO É `/`, E NÃO `/index.html`
+# É a mesma página, mas o Cloudflare Pages responde `/index.html` com um 308
+# para `/` (ele tira o `.html` dos endereços), e a reescrita viraria um
+# redirecionamento que perde o caminho. Nas regras com `*`, ele nem aceita a
+# linha (acusa laço infinito e a ignora). Com `/`, as duas hospedagens servem
+# o `index.html` direto.
+#
+# POR QUE SÓ AS ROTAS DO APP, E NÃO `/*`
+# No Cloudflare Pages a regra vale ANTES de procurar o arquivo: lá, um `/*`
+# faria o bundle, o `sw.js` e os ícones voltarem como HTML, e o app não
+# abriria. E em qualquer hospedagem, uma volta geral ao app responderia 200 com
+# HTML a um `/assets/` que não existe — e o service worker guardaria essa página
+# como se fosse o JavaScript. Aqui, caminho que não é rota do app nem arquivo dá 404
+# (com o `404.html`; no Cloudflare Pages, a presença dele é o que desliga o
+# "modo SPA", que responderia 200 a qualquer caminho).
+#
+# AS ROTAS SÃO AS DE `src/App.tsx`. Rota nova lá precisa de linha nova aqui, em
+# `vercel.json` e em `exemplos/servidor/Caddyfile`; `src/hospedagem.test.ts`
+# reprova enquanto as quatro listas não forem a mesma. `/painel/:usuarioId` e
+# `/folha/:usuarioId` viram `/*`: o app confere o resto do caminho. As linhas
+# com `*` vêm por último, que é a ordem que o Pages lê mais rápido.
+#
+# FORMATO: origem, destino e status, separados por espaço. Comentário só em
+# linha que começa com `#`.
+# ---------------------------------------------------------------------------
+/entrar         /  200
+/sem-acesso     /  200
+/definir-pin    /  200
+/espelho        /  200
+/painel         /  200
+/administracao  /  200
+/painel/*       /  200
+/folha/*        /  200

@@ -1,0 +1,157 @@
+# ---------------------------------------------------------------------------
+# CONFERIR EM TODO PUSH E EM TODO PULL REQUEST
+#
+# Dois trabalhos, em paralelo. Nenhum publica nada nem usa segredo.
+#   • conferir: falha conhecida nas dependências de produção, lint, teste de
+#     fumaça das rotas, testes, contagem de testes do README e build;
+#   • banco: sobe o banco de um Supabase local dentro do runner, aplica a
+#     migration e roda os testes de banco (`npm run db:testar`), a mesma prova
+#     que quem desenvolve roda na própria máquina.
+#
+# POR QUE SEM SEGREDOS
+# Conferir não precisa falar com o Supabase hospedado nem com a hospedagem. Os
+# testes do `conferir` rodam contra um Supabase simulado, sem rede, e o build
+# passa sem as variáveis `VITE_*`: o Vite só as grava no bundle, e quem reclama
+# da falta delas é o `src/lib/supabase.ts`, na hora de ABRIR o app, não na de
+# compilar. Por isso o `dist/` que sai daqui não serve para publicar, e não é
+# guardado. O `banco` sobe um Supabase descartável no próprio runner, com as
+# credenciais locais padrão do CLI, que não abrem nada fora dele (e que o
+# passo não imprime). Sem segredo, o workflow roda igual em pull request vindo
+# de fork, que o GitHub não deixa ler segredo nenhum.
+#
+# O QUE NÃO PASSA POR AQUI
+# O `tsc -b` do build só enxerga `src/` (e, por ela, os módulos puros da Edge
+# Function que os testes importam). O lint lê as Edge Functions com o bloco do
+# Deno do `eslint.config.js`. A Edge Function em si não roda no CI: o `banco`
+# sobe só o banco, e os testes dele falam SQL direto com ele.
+# ---------------------------------------------------------------------------
+name: Conferir
+
+on:
+  push:
+    # `'**'` casa com qualquer nome de branch, inclusive com barra. Tag não
+    # entra: tag não é trabalho novo.
+    branches: ['**']
+  pull_request:
+
+# Dois pushes seguidos no mesmo branch: o segundo cancela o primeiro, porque só
+# o resultado do commit mais novo interessa. Push e pull request do mesmo
+# branch têm `ref` diferente e não se cancelam.
+concurrency:
+  group: conferir-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conferir:
+    runs-on: ubuntu-latest
+    # A conferência inteira leva poucos minutos. Um passo travado não pode
+    # segurar o runner pelas 6 horas do limite padrão.
+    timeout-minutes: 15
+
+    # Só leitura: este workflow não escreve nada no repositório.
+    permissions:
+      contents: read
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Preparar o Node
+        uses: actions/setup-node@v4
+        with:
+          # A versão 22 mais nova, que atende ao `engines` do package.json
+          # (22.12 ou mais: o jsdom dos testes não roda em Node mais antigo).
+          node-version: 22
+          # Reaproveita o cache do npm entre execuções, usando o
+          # package-lock.json como chave.
+          cache: npm
+
+      - name: Instalar as dependências
+        # `npm ci` e não `npm install`: instala exatamente o que está no
+        # package-lock.json e falha se ele estiver fora de sincronia com o
+        # package.json.
+        run: npm ci
+
+      - name: Conferir as dependências que vão para o ar
+        # Reprova com falha conhecida alta ou crítica numa dependência de
+        # produção (as de `dependencies`, que entram no JavaScript que o celular
+        # baixa). As ferramentas de build e de teste (`devDependencies`) ficam de
+        # fora: não vão para o ar. O passo consulta a base pública de falhas do
+        # npm e não usa segredo.
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Conferir o estilo
+        run: npm run lint
+
+      - name: Teste de fumaça das rotas
+        # O app inteiro monta num DOM simulado (jsdom), com o Supabase
+        # simulado, e cada rota de administração e de colaborador é aberta até
+        # os efeitos assentarem. Reprova com qualquer erro ou aviso de console,
+        # frase de falha de carga, gravação ou RPC desconhecida. Também roda
+        # dentro do `npm test`; o passo próprio é para a falha aparecer com
+        # nome no resumo. Ver o cabeçalho de `src/fumaca-das-rotas.test.ts`.
+        run: npm run test:fumaca
+
+      - name: Rodar os testes
+        run: npm test
+
+      - name: Conferir a contagem de testes do README
+        # O README diz quantos testes o `npm test` roda, e esse número
+        # envelhece calado a cada teste novo. O script pergunta ao Vitest e
+        # falha dizendo a linha certa. Ver o cabeçalho de
+        # `scripts/conferir-readme.mjs`.
+        run: node scripts/conferir-readme.mjs
+
+      - name: Construir o site
+        # Sem `env`, de propósito: ver "POR QUE SEM SEGREDOS" no topo.
+        run: npm run build
+
+  banco:
+    # Os testes de banco (supabase/testes/), num Supabase local que nasce e
+    # morre com o runner. Ver o cabeçalho de `scripts/testar-banco.sh`.
+    runs-on: ubuntu-latest
+    # Baixar as imagens e subir o banco leva poucos minutos, e os testes,
+    # segundos. Logo depois da meia-noite de Brasília o script espera até
+    # cinco minutos (o pedido de batida esquecida só vale para hoje). Um passo
+    # travado não pode segurar o runner pelas 6 horas do limite padrão.
+    timeout-minutes: 20
+
+    # Só leitura: este trabalho não escreve nada no repositório.
+    permissions:
+      contents: read
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Preparar o Node
+        uses: actions/setup-node@v4
+        with:
+          # A mesma do trabalho `conferir`: o `engines` pede 22.12 ou mais.
+          node-version: 22
+          cache: npm
+
+      - name: Instalar as dependências
+        # O Supabase CLI vem daqui (a devDependency `supabase`): a mesma
+        # versão da máquina de quem desenvolve, presa no package-lock.json.
+        run: npm ci
+
+      - name: Subir o banco do Supabase local
+        # Só o banco: os testes falam SQL direto com ele, e nenhum outro
+        # serviço é usado. A estrutura do login (auth) e do storage nasce igual
+        # sem os serviços, porque o CLI aplica as migrations deles ao iniciar o
+        # banco ("Initialising schema"); depois vem a migration do ponto. Os
+        # nomes são os de `npx supabase start --help` do CLI 2.122 (o servidor
+        # de e-mail se chama mailpit; um nome que o CLI não conhece é ignorado
+        # calado). A saída padrão traz só a URL do banco, com a senha local do
+        # CLI, e vai para /dev/null; o progresso e os erros saem no log.
+        run: >-
+          npx supabase start
+          --exclude gotrue,realtime,storage-api,imgproxy,kong,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+          > /dev/null
+
+      - name: Rodar os testes de banco
+        # Cada arquivo roda numa transação desfeita no fim; o script exige
+        # linhas OK, nenhum FALHOU, o ROLLBACK no fim de cada arquivo e o banco
+        # igual antes e depois de todos.
+        run: npm run db:testar

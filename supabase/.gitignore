@@ -1,0 +1,12 @@
+# Supabase
+.branches
+.temp
+
+# Rascunhos de SQL que o Studio local guarda: podem ter dado de teste, e o
+# banco do ponto nasce só da migration.
+snippets
+
+# dotenvx
+.env.keys
+.env.local
+.env.*.local

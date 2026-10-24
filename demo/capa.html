@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Capa do Ponto Livre</title>
+<!--
+  A CAPA DO README (docs/imagens/capa.png).
+
+  Uma composição, e não um print: o nome, a frase do README e as telas de
+  verdade, num celular e num notebook desenhados aqui em CSS. As telas são os
+  prints que `npm run demo:prints` acabou de tirar (os caminhos relativos
+  abaixo), e o roteiro (`e2e/demonstracao.spec.ts`) fotografa esta página no
+  fim, a 1200×630 com densidade 2: a imagem sai 2400×1260.
+
+  As fontes são as do app (Quicksand e JetBrains Mono, do node_modules, sob a
+  SIL Open Font License), e as cores, as do app (`src/index.css`). Nada vem da
+  rede: a página abre do disco.
+-->
+<style>
+  @font-face { font-family: 'Quicksand'; font-weight: 500; src: url('../node_modules/@fontsource/quicksand/files/quicksand-latin-500-normal.woff2') format('woff2'); }
+  @font-face { font-family: 'Quicksand'; font-weight: 700; src: url('../node_modules/@fontsource/quicksand/files/quicksand-latin-700-normal.woff2') format('woff2'); }
+  @font-face { font-family: 'JetBrains Mono'; font-weight: 500; src: url('../node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-500-normal.woff2') format('woff2'); }
+
+  :root {
+    --ink-0: #050506; --ink-1: #0b0b0d; --ink-2: #111114; --hair: #f4f1ea17; --hair-2: #f4f1ea29;
+    --plat: #f4f1ea; --plat-dim: #b9b9c1; --mute: #8a8a94; --luz: #00ff66;
+  }
+  html, body { margin: 0; }
+  body {
+    position: relative; width: 1200px; height: 630px; overflow: hidden;
+    background:
+      radial-gradient(640px 420px at 82% 92%, rgba(0, 255, 102, .10), transparent 70%),
+      radial-gradient(520px 360px at 8% 0%, rgba(0, 255, 102, .05), transparent 70%),
+      var(--ink-0);
+    font-family: 'Quicksand', 'Helvetica Neue', Arial, sans-serif; color: var(--plat);
+  }
+
+  /* O texto, em cima à esquerda: o nome, a frase do README em duas linhas e os selos. */
+  .texto { position: absolute; left: 60px; top: 46px; width: 580px; }
+  .marca { display: flex; align-items: center; gap: 12px; }
+  .marca svg { width: 44px; height: 44px; }
+  h1 { margin: 0; font-size: 46px; font-weight: 700; letter-spacing: -.02em; line-height: 1; }
+  p { margin: 14px 0 0; font-size: 19px; font-weight: 500; line-height: 1.45; color: var(--plat-dim); }
+  .selos { display: flex; gap: 8px; margin-top: 14px; }
+  .selos span {
+    font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; font-weight: 500; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--mute); border: 1px solid var(--hair-2); border-radius: 999px; padding: 4px 10px;
+  }
+  .selos span:first-child { color: var(--luz); border-color: rgba(0, 255, 102, .35); }
+
+  /* Os celulares: a moldura é o aparelho; o print, a tela. */
+  .celular {
+    position: absolute; width: 162px; height: 351px; box-sizing: border-box; padding: 6px;
+    border-radius: 30px; background: #16161a; border: 1px solid #34343b;
+    box-shadow: 0 0 0 3px #0c0c0e, 0 26px 60px rgba(0, 0, 0, .65);
+  }
+  .celular::before {
+    content: ''; position: absolute; top: 12px; left: 50%; width: 46px; height: 12px; margin-left: -23px;
+    border-radius: 999px; background: #000; z-index: 1;
+  }
+  .celular img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; border-radius: 24px; }
+
+  /* O notebook: a tela com o painel, e a base. */
+  .notebook { position: absolute; left: 654px; top: 150px; width: 496px; }
+  .notebook .tampa {
+    padding: 11px 11px 14px; border-radius: 16px 16px 6px 6px; background: #121216; border: 1px solid #34343b;
+    box-shadow: 0 30px 70px rgba(0, 0, 0, .6);
+  }
+  .notebook .tampa img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top; border-radius: 4px; }
+  .notebook .base {
+    position: relative; height: 15px; margin: 0 -44px; border-radius: 3px 3px 14px 14px;
+    background: linear-gradient(#3a3a42, #1b1b20); box-shadow: 0 18px 30px rgba(0, 0, 0, .55);
+  }
+  .notebook .base::before {
+    content: ''; position: absolute; left: 50%; top: 0; width: 86px; height: 6px; margin-left: -43px;
+    border-radius: 0 0 8px 8px; background: #121216;
+  }
+</style>
+</head>
+<body>
+  <div class="texto">
+    <div class="marca">
+      <!-- O ícone do app: o mesmo desenho de public/favicon.svg. -->
+      <svg viewBox="0 0 512 512" aria-hidden="true">
+        <g transform="translate(25.6 29.2) scale(0.9)" fill="none" stroke="#00ff66" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="256" cy="284" r="168" stroke-width="44"/>
+          <path d="M256 102V56M220 52h72" stroke-width="44"/>
+          <path d="M180 290l56 56 100-114" stroke-width="50"/>
+        </g>
+      </svg>
+      <h1>Ponto Livre</h1>
+    </div>
+    <!-- A frase do README, uma frase por linha (sem um "O" sozinho no fim da primeira). -->
+    <p>Registro de ponto pelo celular, com selfie, PIN e localização.<br>O RH confere, corrige, fecha e imprime o mês.</p>
+    <div class="selos"><span>beta</span><span>licença MIT</span><span>Supabase + PWA</span></div>
+  </div>
+
+  <div class="notebook">
+    <div class="tampa"><img src="../docs/imagens/painel.png" alt=""></div>
+    <div class="base"></div>
+  </div>
+
+  <div class="celular" style="left: 60px; top: 254px"><img src="../docs/imagens/celular-bater.png" alt=""></div>
+  <div class="celular" style="left: 238px; top: 240px"><img src="../docs/imagens/celular-comprovante.png" alt=""></div>
+  <div class="celular" style="left: 416px; top: 254px"><img src="../docs/imagens/celular-espelho.png" alt=""></div>
+</body>
+</html>

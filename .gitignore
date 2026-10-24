@@ -1,0 +1,33 @@
+# Dependências, build e cobertura: tudo se refaz a partir do código.
+node_modules
+dist
+coverage
+
+# Ambiente: as chaves ficam só na máquina de quem roda. O modelo sem valores
+# (.env.example) é o único que vai para o git.
+.env
+.env.*
+!.env.example
+
+# Arquivos locais do Supabase CLI.
+supabase/.temp
+supabase/.branches
+
+# Relatórios de teste no navegador.
+test-results
+playwright-report
+
+# Estado local das ferramentas de hospedagem.
+.wrangler
+.netlify
+.vercel
+
+# Sistema e logs.
+.DS_Store
+*.log
+
+# Cópias de conflito que o iCloud (ou outro sincronizador) cria ao lado do
+# original: "arquivo 2.ts", "pasta 2". Elas guardam versões velhas e nunca
+# devem entrar no git.
+* [0-9]
+* [0-9].*

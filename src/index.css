@@ -1,0 +1,190 @@
+/*
+ * AS FONTES MORAM NO PRÓPRIO APP.
+ *
+ * Quicksand (400, 500, 600 e 700) e JetBrains Mono (400 e 500) vêm dos pacotes
+ * `@fontsource/*` (as duas sob a SIL Open Font License 1.1; a licença vai junto
+ * em `node_modules/@fontsource/<fonte>/LICENSE`). O build copia os arquivos
+ * para `dist/assets/` e o navegador os baixa do mesmo endereço do app.
+ *
+ * POR QUE NÃO O GOOGLE FONTS
+ *   - cada abertura do app levaria o IP de cada funcionário, a hora e a página
+ *     ao Google, sem que a empresa tenha base para isso (LGPD);
+ *   - a política de conteúdo (CSP, gerada no build: ver `vite.config.ts`) teria
+ *     de liberar dois domínios de terceiros, um para o CSS e outro para as
+ *     fontes. Com as fontes aqui, `style-src` e `font-src` ficam em `'self'`.
+ *
+ * Cada arquivo de peso traz todos os alfabetos da fonte (latino, latino
+ * estendido, vietnamita; e, na mono, cirílico e grego), cada um com o seu
+ * `unicode-range`: o navegador só baixa o que a página usa. Os pesos são os
+ * que as telas usam; peso novo em tela precisa da linha dele aqui.
+ */
+@import '@fontsource/quicksand/400.css';
+@import '@fontsource/quicksand/500.css';
+@import '@fontsource/quicksand/600.css';
+@import '@fontsource/quicksand/700.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+
+/*
+ * `source("../src")` limita a varredura do Tailwind ao código.
+ *
+ * SEM ISSO, QUALQUER DOCUMENTO DO REPOSITÓRIO ENTRA NO CSS DE PRODUÇÃO.
+ * O Tailwind 4 detecta as classes sozinho varrendo o projeto INTEIRO — e não
+ * só o código. Os documentos, o README, os exemplos e os arquivos do GitHub
+ * Actions são lidos do mesmo jeito, e toda palavra que pareça um utilitário
+ * vira regra.
+ *
+ * Não é teoria: um workflow com `permissions: contents: read` basta para o
+ * build passar a emitir uma regra `.contents` que nenhum componente usa — o
+ * bundle de CSS muda por causa de uma linha de configuração de CI.
+ *
+ * O efeito colateral pior é o outro: o CSS de produção passaria a depender de
+ * arquivos que não são código, e escrever um documento mudaria o que vai para
+ * o ar. Quem compara o hash do build local com o do publicado deixaria de
+ * poder confiar nessa comparação.
+ *
+ * Fica a detecção AUTOMÁTICA, e não uma lista fixa: componente novo dentro de
+ * `src/` continua sendo achado sozinho, sem ninguém precisar lembrar de
+ * registrar. O que muda é só a fronteira.
+ *
+ * `index.html` e `public/` ficam de fora porque foi conferido que não têm
+ * atributo `class` nenhum. Se um dia tiverem, é preciso acrescentar
+ * `@source "../index.html";` aqui.
+ */
+@import "tailwindcss" source("../src");
+
+/*
+ * Os tokens do app: base preta, a rampa de tinta, os fios, a escala de texto e
+ * o verde de destaque. O nome do app muda pelo build (`src/lib/marca.ts`); a
+ * cara, não — quem quiser outra cor de destaque troca as três `--color-luz*`
+ * (e o verde dos ícones de `public/`).
+ */
+@theme {
+  /* Rampa de fundo. --ink-0 é o chão da página. */
+  --color-ink-0: #050506;
+  --color-ink-1: #0b0b0d;
+  --color-ink-2: #111114;
+  --color-ink-3: #17171b;
+
+  /* Fios: sempre o mesmo branco-osso variando o alfa. */
+  --color-hair: #f4f1ea17;
+  --color-hair-2: #f4f1ea29;
+  --color-hair-3: #f4f1ea47;
+
+  /*
+   * Escala de texto.
+   *
+   * --faint CARREGA INFORMAÇÃO. As telas o usam para o local da batida, a
+   * contagem do dia, a ajuda do motivo e a trilha, que o RH precisa ler, e
+   * por isso ele tem contraste de texto: #808089 dá 5,21:1 sobre ink-0, 5,03
+   * sobre ink-1, 4,82 sobre ink-2 e 4,57 sobre ink-3, todos acima dos 4,5:1.
+   *
+   * --faint E --mute QUASE SE CONFUNDEM PELA COR: o --mute (#8a8a94) dá
+   * 6,0:1 sobre ink-0, contra os 5,2:1 do --faint, e os dois ficam a 1,14:1
+   * um do outro. A hierarquia entre "secundário" e "apagado" vem do tamanho e
+   * do peso do texto, e é neles que se mexe para separar os dois, com o
+   * --faint sempre acima dos 4,5:1.
+   */
+  --color-plat: #f4f1ea;
+  --color-plat-dim: #b9b9c1;
+  --color-mute: #8a8a94;
+  --color-faint: #808089;
+
+  /* O verde de destaque — a cor de ação. */
+  --color-luz: #00ff66;
+  --color-luz-deep: #00e65c;
+  --color-luz-soft: #00ff6624;
+
+  --color-warn: #ffb020;
+  --color-warn-soft: #ffb02024;
+  --color-err: #ff5a5a;
+  --color-err-soft: #ff5a5a24;
+
+  --font-display: 'Quicksand', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  font-family: var(--font-display);
+  background: var(--color-ink-0);
+  color: var(--color-plat-dim);
+  /* O app é instalado em tela cheia; a barra de status do iPhone come o topo. */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/*
+ * Zoom involuntário no iOS: o Safari amplia a página ao focar um campo com
+ * fonte menor que 16px e não desfaz o zoom ao sair. Fica FORA de @layer de
+ * propósito — no Tailwind v4 as utilitárias vivem na camada `utilities`, e CSS
+ * sem camada tem precedência sobre qualquer camada.
+ */
+@media (max-width: 639px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/*
+ * IMPRESSÃO — a folha de ponto que o funcionário assina.
+ *
+ * POR QUE ISTO É CSS BRUTO E NÃO CLASSE DO TAILWIND
+ * `@page` não tem utilitária: tamanho de papel e margem de impressão são regra
+ * do documento, não do elemento, e não existe `print:size-a4`. Todo o RESTO da
+ * folha é desenhado com as utilitárias `print:` na própria `FolhaParaImprimir.tsx`,
+ * que é onde quem mexe no layout vai procurar.
+ *
+ * POR QUE NÃO ENTROU BIBLIOTECA DE PDF
+ * O PDF sai da caixa de impressão do navegador — "Salvar como PDF" —, que já
+ * está em todo aparelho que abre este app, inclusive no celular. Uma
+ * dependência de geração de PDF acrescentaria centenas de kB ao pacote e uma
+ * segunda régua de layout, que divergiria desta na primeira mudança.
+ *
+ * A BASE PRETA DO APP NÃO PODE VAZAR PARA O PAPEL. Por padrão, o navegador não
+ * imprime cor de fundo, mas quem liga "imprimir gráficos de segundo plano"
+ * — e é o que se faz para sair uma tabela decente — imprimiria a página inteira
+ * de preto. As três linhas abaixo fecham isso na raiz.
+ */
+@media print {
+  @page {
+    size: A4 portrait;
+    /* Margem generosa: é nela que o RH escreve à mão e é onde o furador entra. */
+    margin: 14mm 12mm;
+  }
+
+  html {
+    /* O app é `color-scheme: dark`. No papel, isso escureceria os campos de
+       formulário e as bordas que o navegador desenha por conta própria. */
+    color-scheme: light;
+  }
+
+  html,
+  body {
+    background: #fff;
+    color: #000;
+    /* `env(safe-area-inset-*)` é do iPhone em tela cheia; no papel vira margem
+       fantasma somada à do `@page`. */
+    padding: 0;
+    margin: 0;
+  }
+}
+
+/*
+ * UMA PESSOA POR PÁGINA.
+ *
+ * Hoje a tela imprime uma folha de cada vez e esta regra não faz nada. Ela está
+ * aqui porque a folha consolidada do mês inteiro é uma melhoria prevista — e
+ * quando ela chegar, empilhar `<article class="folha-de-ponto">`
+ * já vai sair certo, com cada pessoa começando numa página nova, em vez de a
+ * segunda folha começar no meio da primeira.
+ */
+.folha-de-ponto + .folha-de-ponto {
+  break-before: page;
+}

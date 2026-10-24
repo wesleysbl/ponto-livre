@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Atestado de exemplo</title>
+<!--
+  O ATESTADO DA DEMONSTRAÇÃO, FICTÍCIO DE PROPÓSITO.
+
+  A falta justificada da demonstração leva uma foto de atestado, como no dia a
+  dia do RH. Uma foto de atestado de verdade seria documento de alguém; este é
+  um papel desenhado em HTML, que diz em letras grandes que é exemplo e não traz
+  médico, registro profissional nem clínica que existam. O Chrome o fotografa
+  como JPEG: `demo/semear.mjs` sobe a foto ao bucket `ponto-atestados`, e o
+  roteiro dos prints (`e2e/demonstracao.spec.ts`) a anexa na caixa de lançar
+  falta.
+
+  O nome e o dia vêm do endereço (`?nome=Caio%20Mendes&dia=14/10/2026`), para o
+  papel dizer o mesmo que a ausência lançada.
+-->
+<style>
+  html, body { margin: 0; background: #d9d4c7; }
+  body {
+    width: 900px; height: 1200px; display: flex; align-items: center; justify-content: center;
+    font-family: 'Helvetica Neue', Arial, sans-serif; color: #1d1d1f;
+  }
+  .papel {
+    position: relative; width: 760px; height: 1060px; box-sizing: border-box; padding: 72px 76px;
+    background: #fffdf8; box-shadow: 0 6px 24px rgba(0, 0, 0, .18); overflow: hidden;
+  }
+  .topo { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #1d1d1f; padding-bottom: 18px; }
+  .topo strong { display: block; font-size: 22px; letter-spacing: .04em; }
+  .topo span { font-size: 15px; color: #555; }
+  .aviso {
+    margin-top: 26px; padding: 14px 18px; border: 3px solid #c0262d; color: #c0262d;
+    font-weight: 700; font-size: 22px; letter-spacing: .06em; text-align: center;
+  }
+  h1 { margin: 54px 0 0; font-size: 40px; letter-spacing: .1em; text-align: center; }
+  p { font-size: 22px; line-height: 1.7; margin: 34px 0 0; }
+  .assinatura { position: absolute; left: 76px; right: 76px; bottom: 150px; text-align: center; font-size: 18px; color: #333; }
+  .assinatura::before { content: ''; display: block; width: 360px; margin: 0 auto 10px; border-top: 1.5px solid #1d1d1f; }
+  .rodape { position: absolute; left: 76px; right: 76px; bottom: 60px; font-size: 15px; color: #666; text-align: center; }
+  .carimbo {
+    position: absolute; top: 470px; left: 50%; transform: translateX(-50%) rotate(-24deg);
+    font-size: 86px; font-weight: 800; letter-spacing: .08em; color: rgba(192, 38, 45, .16);
+    white-space: nowrap; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+  <div class="papel">
+    <div class="topo">
+      <div><strong>CLÍNICA DE EXEMPLO</strong><span>Documento de demonstração</span></div>
+      <span>Campinas/SP</span>
+    </div>
+    <div class="aviso">ATESTADO — EXEMPLO FICTÍCIO</div>
+    <h1>ATESTADO MÉDICO</h1>
+    <p>Atesto, para os devidos fins, que <strong id="nome">a pessoa do exemplo</strong> esteve em consulta
+      no dia <strong id="dia">—</strong> e precisa se afastar das atividades por 1 (um) dia.</p>
+    <p>Este papel foi desenhado para a demonstração do Ponto Livre. Não vale como atestado.</p>
+    <div class="assinatura">Médica de exemplo (fictícia)</div>
+    <div class="rodape">Sem nome, sem registro profissional e sem endereço de verdade: só um exemplo.</div>
+    <div class="carimbo">EXEMPLO FICTÍCIO</div>
+  </div>
+  <script>
+    const parametros = new URLSearchParams(location.search)
+    if (parametros.get('nome')) document.getElementById('nome').textContent = parametros.get('nome')
+    if (parametros.get('dia')) document.getElementById('dia').textContent = parametros.get('dia')
+  </script>
+</body>
+</html>

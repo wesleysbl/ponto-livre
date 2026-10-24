@@ -1,0 +1,86 @@
+# ---------------------------------------------------------------------------
+# Cabeçalhos do app nas hospedagens de site estático.
+#
+# QUEM LÊ ESTE ARQUIVO
+# O Cloudflare Pages e o Netlify leem `_headers` na raiz do site publicado (o
+# build copia este arquivo de `public/` para `dist/`). A Vercel não lê: lá os
+# mesmos cabeçalhos estão em `vercel.json`, na raiz do repositório. Quem serve
+# o build no próprio servidor tem os mesmos cabeçalhos em
+# `exemplos/servidor/Caddyfile`. `src/hospedagem.test.ts` confere que os três
+# dizem o mesmo que este arquivo.
+#
+# ONDE ISTO VALE
+# Só em resposta a ARQUIVO ESTÁTICO. O app não tem função de servidor na
+# hospedagem (nem `functions/` do Pages, nem do Netlify): este arquivo vale
+# para tudo que o site serve. Se um dia existir uma função lá, ela terá de
+# repetir estes cabeçalhos na própria resposta.
+#
+# O QUE A HOSPEDAGEM JÁ MANDA SOZINHA, e por isso não precisa estar aqui:
+#   Cache-Control: public, max-age=0, must-revalidate  <- o padrão do index.html
+#   Etag, e 304 na revalidação
+# Nenhuma das duas manda `Permissions-Policy` por conta própria — é por isso
+# que câmera e GPS funcionam sem configuração. Ver o bloco `/*` logo abaixo.
+#
+# COMENTÁRIO SÓ NA COLUNA 0, nunca dentro de um bloco: linha indentada dentro
+# de um bloco é lida como par `nome: valor`.
+# ---------------------------------------------------------------------------
+
+# --- Todo o app -------------------------------------------------------------
+# Permissions-Policy: câmera e localização SÃO o produto — sem as duas não
+#   existe batida. `(self)` é exatamente o padrão do navegador, então esta
+#   linha não libera nada de novo. Ela está escrita por dois motivos: para que
+#   ninguém "endureça" este arquivo pondo `camera=()` sem perceber que isso
+#   desliga o app, e para deixar a exigência visível caso a hospedagem um dia
+#   comece a injetar Permissions-Policy. `microphone=()` é verdade: a captura
+#   pede `audio: false`.
+# CSP: ESTE ARQUIVO É O MODELO, e o build completa a linha. Aqui ela diz só
+#   `frame-ancestors 'none'` (o app mostra rosto de funcionário; ninguém o
+#   embute num iframe). O resto da política depende do Supabase de cada
+#   instalação e do hash dos `<style>` do index.html e do 404.html, e por isso é
+#   gerado no build (`src/lib/politica-de-conteudo.ts`, ligado pelo
+#   `vite.config.ts`): no `dist/_headers`, esta linha sai com a política
+#   inteira, e a mesma política vai numa meta no `index.html` e no `404.html`.
+#   Não escreva outra CSP aqui: o build recusa, para ela não sumir calada.
+#   NA VERCEL E NO CADDY o cabeçalho estático (`vercel.json`, Caddyfile) fica
+#   com o `frame-ancestors 'none'` e o resto chega pela meta. Para ter a
+#   política inteira também no cabeçalho, copie o valor da linha
+#   `Content-Security-Policy` do `dist/_headers` para o `value` desse cabeçalho
+#   em `vercel.json` (ou para a linha dele no Caddyfile), e refaça a cópia a
+#   cada build com outro Supabase. `src/hospedagem.test.ts` confere os três
+#   arquivos daqui do repositório, que continuam iguais entre si.
+# Referrer-Policy: a URL carrega id de funcionário (`/painel/{uuid}`).
+#   `no-referrer` é o único valor que garante que ela não sai daqui.
+# X-Robots-Tag: o app é de uso interno; nenhuma tela dele deve ir para busca.
+# Strict-Transport-Security: HTTPS é requisito de funcionamento (câmera e GPS
+#   só existem em página segura), não enfeite. SEM `includeSubDomains` e SEM
+#   `preload` de propósito: não se sabe o que mais mora no domínio escolhido, e
+#   nenhum dos dois se desfaz rápido no navegador de quem já visitou.
+/*
+  Permissions-Policy: camera=(self), geolocation=(self), microphone=()
+  Content-Security-Policy: frame-ancestors 'none'
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  X-Robots-Tag: noindex, nofollow
+  Strict-Transport-Security: max-age=31536000
+  Cross-Origin-Opener-Policy: same-origin
+
+# --- O service worker -------------------------------------------------------
+# Um sw.js velho grudado no navegador segura o app numa versão antiga por tempo
+# indeterminado. Ele nunca pode vir do cache.
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+
+# --- O manifesto ------------------------------------------------------------
+# Revalida sempre: é nele que o nome configurado do app chega ao celular.
+/manifest.webmanifest
+  Cache-Control: no-cache
+
+# --- Os arquivos do build ---------------------------------------------------
+# O nome carrega hash do conteúdo (`index-ChZEWLch.js`): mudou o arquivo, mudou
+# o nome. Então cache eterno é seguro, e no 4G é a diferença entre abrir na
+# hora e esperar meio mega. O `index.html` continua com o padrão da hospedagem
+# (`max-age=0, must-revalidate`), que é o que faz um deploy novo aparecer na
+# abertura seguinte.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

@@ -1,0 +1,101 @@
+# ---------------------------------------------------------------------------
+# EXEMPLO: o app servido pelo Caddy, num servidor próprio.
+#
+# Para quem não usa Cloudflare Pages, Netlify nem Vercel e quer servir o build
+# (a pasta `dist/`) numa máquina sua. O Caddy pede e renova sozinho o
+# certificado HTTPS do domínio — e HTTPS não é enfeite: sem ele o navegador não
+# libera câmera nem GPS, e não há batida.
+#
+# COMO USAR
+#   1. Gere o build com as variáveis do seu Supabase (e, se quiser, o nome do
+#      app): `npm run build`. Copie a pasta `dist/` para o servidor, por exemplo
+#      para /srv/ponto/dist.
+#   2. Troque `ponto.example.com` pelo seu domínio (com o DNS já apontando para
+#      este servidor) e, se for outro, o caminho do `root`.
+#   3. Valide e suba: `caddy validate --config Caddyfile` e
+#      `caddy run --config Caddyfile` (ou recarregue o serviço do Caddy).
+#
+# O QUE ESTE ARQUIVO REPETE DE OUTROS, E QUEM CONFERE
+# Os cabeçalhos são os de `public/_headers` (o arquivo do Pages e do Netlify),
+# e a volta ao app vale só nas rotas de `src/App.tsx`. `src/hospedagem.test.ts`
+# compara os três arquivos: mudou um, mude os outros.
+#
+# O app fala com o Supabase pelo endereço gravado no build (VITE_SUPABASE_URL).
+# Este servidor só entrega arquivos.
+#
+# A POLÍTICA DE CONTEÚDO (CSP)
+# O build põe a política inteira numa meta do `index.html` e do `404.html`, e
+# ela vale aqui sem nada a fazer. A linha `Content-Security-Policy` abaixo só
+# tem o `frame-ancestors 'none'`, que numa meta não vale. Para ter a política
+# inteira também no cabeçalho (é o que o Cloudflare Pages e o Netlify recebem),
+# troque o valor dela pelo da linha `Content-Security-Policy` do
+# `dist/_headers` do SEU build — ele já termina em `frame-ancestors 'none'` — e
+# refaça a troca a cada build com outro Supabase.
+# ---------------------------------------------------------------------------
+
+ponto.example.com {
+	# Onde está o build. Fica fora do `route` lá embaixo para valer também nas
+	# páginas de erro (`handle_errors`).
+	root * /srv/ponto/dist
+
+	# Os oito cabeçalhos do bloco "/*" de public/_headers, em TODA resposta:
+	# página, arquivos e 404. Sem `defer`, de propósito: aplicados logo na
+	# chegada do pedido, eles valem também para a página de erro, que o Caddy
+	# escreve fora desta cadeia (com `defer`, só valeriam no que passasse por
+	# ela). Por isso o bloco só DEFINE cabeçalhos: apagar um (como `-Server`),
+	# dar valor padrão (`?`) ou usar `>` liga o `defer` sozinho no bloco
+	# inteiro, e a página de 404 sairia sem nenhum dos oito.
+	header {
+		Permissions-Policy "camera=(self), geolocation=(self), microphone=()"
+		Content-Security-Policy "frame-ancestors 'none'"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		X-Robots-Tag "noindex, nofollow"
+		Strict-Transport-Security "max-age=31536000"
+		Cross-Origin-Opener-Policy "same-origin"
+	}
+
+	# `route` mantém a ordem exatamente como está escrita.
+	route {
+		# `_headers` e `_redirects` são configuração do Pages e do Netlify, que
+		# o build copia para `dist/`. Aqui eles não valem, e não há por que
+		# entregá-los a quem pedir.
+		@config_de_hospedagem path /_headers /_redirects
+		respond @config_de_hospedagem 404
+
+		# Volta para o index.html SÓ nas rotas do app (as de src/App.tsx), para
+		# quem abre `/espelho` direto ou dá F5 em `/painel/<id>`. Nada de
+		# `try_files` geral: um `/assets/` inexistente respondendo 200 com HTML
+		# seria guardado pelo service worker como se fosse o JavaScript. O que não
+		# é arquivo nem rota do app cai no 404 lá embaixo.
+		@app path /entrar /sem-acesso /definir-pin /espelho /painel /painel/* /administracao /folha/*
+		rewrite @app /index.html
+
+		# Cache. O padrão é revalidar sempre (index.html, rotas do app,
+		# manifesto e ícones), e é isso que faz um build novo aparecer na
+		# abertura seguinte. O service worker nunca vem do cache: um sw.js velho
+		# segura o app numa versão antiga. Cache eterno só para o que EXISTE em
+		# /assets/ (o nome leva o hash do conteúdo); um 404 de /assets/ não pode
+		# ficar guardado por um ano.
+		header Cache-Control "no-cache"
+		header /sw.js Cache-Control "no-cache, no-store, must-revalidate"
+		@asset_existe {
+			path /assets/*
+			file
+		}
+		header @asset_existe Cache-Control "public, max-age=31536000, immutable"
+
+		# O tipo do manifesto, que nem todo sistema conhece pela extensão.
+		header /manifest.webmanifest Content-Type "application/manifest+json"
+
+		encode zstd gzip
+		file_server
+	}
+
+	# O que não é arquivo nem rota do app: 404, com a página 404.html do build.
+	handle_errors 404 {
+		rewrite * /404.html
+		file_server
+	}
+}

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- Os marcadores entre sinais de porcentagem viram o nome e a descrição do app
+         no build e no npm run dev (ver vite.config.ts e src/lib/marca.ts). -->
+    <title>%NOME_DO_APP%</title>
+    <meta name="description" content="%DESCRICAO_DO_APP%" />
+
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <!-- Gerado no build a partir do nome configurado: não existe em public/. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <meta name="theme-color" content="#050506" />
+    <!-- iOS não lê o manifesto: a tela cheia, a barra escura e o nome do ícone vêm daqui. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="%NOME_DO_APP%" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- O build põe a política de conteúdo (CSP) numa meta logo depois do charset.
+         Ela libera o estilo abaixo pelo hash do texto, calculado no build: ele
+         pode mudar à vontade. O que ela não libera é script em linha nem atributo
+         style ou on... nas tags, e o build recusa os dois
+         (ver src/lib/politica-de-conteudo.ts). -->
+    <style>
+      /* Fundo pintado antes do React montar, para não haver um flash branco na
+         abertura do app instalado. */
+      html, body { background: #050506; }
+
+      /* Aviso de emergência: vive dentro de #root e some assim que o React
+         monta. Só fica visível se, passados 5 segundos, nada tiver carregado —
+         evita a tela preta sem explicação. */
+      #aviso-carregamento {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        max-width: 26rem;
+        margin: 18vh auto 0;
+        padding: 0 1.5rem;
+        color: #8a8a94;
+        text-align: center;
+        opacity: 0;
+        animation: aviso-surge 0s linear 5s forwards;
+      }
+      #aviso-carregamento h1 {
+        font-size: 1.0625rem;
+        font-weight: 600;
+        color: #f4f1ea;
+        margin: 0 0 0.75rem;
+      }
+      #aviso-carregamento p {
+        font-size: 0.9375rem;
+        line-height: 1.6;
+        margin: 0 0 0.75rem;
+      }
+      @keyframes aviso-surge { to { opacity: 1; } }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div id="aviso-carregamento">
+        <h1>Não foi possível carregar o app %NOME_DO_APP%</h1>
+        <p>Verifique sua conexão e recarregue a página.</p>
+        <p>Se a mensagem continuar, avise o RH.</p>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

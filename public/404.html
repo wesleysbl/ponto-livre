@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>Página não encontrada</title>
+    <!--
+      A resposta para um caminho que não é arquivo nem rota do app (ver
+      _redirects, vercel.json e exemplos/servidor/Caddyfile). Página estática e
+      sem nada de fora, para abrir mesmo quando o resto falha. No Cloudflare
+      Pages, a existência deste arquivo é o que desliga o "modo SPA", que
+      responderia 200 com o app a qualquer caminho, inclusive a um /assets/
+      que não existe.
+    -->
+    <style>
+      html, body { margin: 0; background: #050506; }
+      main {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        max-width: 26rem;
+        margin: 18vh auto 0;
+        padding: 0 1.5rem;
+        color: #8a8a94;
+        text-align: center;
+      }
+      h1 { font-size: 1.0625rem; font-weight: 600; color: #f4f1ea; margin: 0 0 0.75rem; }
+      p { font-size: 0.9375rem; line-height: 1.6; margin: 0 0 1.25rem; }
+      a {
+        display: inline-block;
+        min-height: 2.75rem;
+        line-height: 2.75rem;
+        padding: 0 1.25rem;
+        border-radius: 0.75rem;
+        background: #00ff66;
+        color: #050506;
+        font-weight: 600;
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Página não encontrada</h1>
+      <p>Este endereço não existe no app do ponto.</p>
+      <a href="/">Abrir o ponto</a>
+    </main>
+  </body>
+</html>

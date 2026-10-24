@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- O ícone do app: um cronômetro com um "check", no verde de destaque sobre o
+       fundo escuro. O mesmo desenho de src/components/Marca.tsx e dos PNGs. -->
+  <rect width="512" height="512" rx="112" fill="#050506"/>
+  <g transform="translate(25.6 29.2) scale(0.9)" fill="none" stroke="#00ff66" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="256" cy="284" r="168" stroke-width="44"/>
+    <path d="M256 102V56M220 52h72" stroke-width="44"/>
+    <path d="M180 290l56 56 100-114" stroke-width="50"/>
+  </g>
+</svg>
