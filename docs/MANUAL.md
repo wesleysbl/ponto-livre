@@ -133,7 +133,7 @@ Toque no cartão da pessoa. A tela mostra **todos os dias do período até hoje*
 
 ![Os dias de uma pessoa, com Corrigir, Inserir batida neste dia e Lançar falta neste dia](imagens/painel-pessoa.png)
 
-- **Em cada batida:** **Corrigir** e o ícone da câmera, que abre a selfie (o link vale por 2 minutos).
+- **Em cada batida:** **Corrigir** e a miniatura da selfie, que abre a foto grande (o link vale por 2 minutos). Enquanto a miniatura não carrega, ou se ela não vier, aparece o ícone da câmera, que abre a foto do mesmo jeito.
 - **Em cada dia:** **Inserir batida neste dia** e **Lançar falta neste dia**. No dia com batida faltando, o botão principal é **Inserir a batida que falta**.
 - **No topo:** **Inserir batida esquecida**, **Lançar falta justificada**, **Folha de (mês) para assinar**, **CSV** e **Resetar PIN**.
 - **Os pedidos** dessa pessoa esperando decisão aparecem acima dos dias.

@@ -1,9 +1,10 @@
-import type { ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { AlertTriangle, CalendarX2, Camera, CameraOff, Clock, LocateOff, MapPin, PencilLine, Plus } from 'lucide-react'
 import { descreverLocalizacao, formatarHora, type BatidaDoAdmin } from '../lib/formato'
 import { formatarDuracao, rotuloDoDia, type DiaDoEspelho } from '../lib/horas'
 import { ancoraDoDia } from '../lib/corrigir'
 import { rotuloNaLista } from '../lib/painel'
+import { useMiniaturasDoDia } from '../hooks/useMiniaturasDoDia'
 import { MarcaDeAjuste, MarcaDeAtraso } from './MarcaDaBatida'
 import { MarcaDeAusencia } from './DiaDeAusencia'
 import { Botao, Etiqueta } from './ui'
@@ -26,6 +27,12 @@ import type { PedidoDeAtraso } from '../lib/atraso'
  * houve foto. Isso aparece escrito ("sem foto — inserida pelo admin") em vez de
  * um quadrado quebrado: o bucket não tem policy de UPDATE, então nem existe
  * caminho para alguém colar uma foto depois.
+ *
+ * A SELFIE APARECE EM MINIATURA. O botão da foto mostra a própria selfie, no
+ * quadrado de 44 px, para quem administra conferir quem bateu sem abrir foto
+ * por foto; o clique abre o visor grande. As assinaturas saem em lote, só
+ * quando o dia chega perto da tela (`useMiniaturasDoDia`); até lá, ou se a
+ * assinatura falhar, fica o ícone da câmera.
  *
  * TODO DIA TEM ÂNCORA E "INSERIR BATIDA NESTE DIA". A tela da pessoa lista
  * todos os dias do período até hoje (`listarDiasDoPeriodo`,
@@ -116,9 +123,15 @@ export function DiaDoPainel({
   const emAndamento = dia.incompleto && ehHoje
   const faltaBatida = dia.incompleto && !ehHoje
   const temPedido = pedidos.length > 0
+  const refDoDia = useRef<HTMLLIElement>(null)
+  const miniaturas = useMiniaturasDoDia(
+    refDoDia,
+    dia.batidas.flatMap((batida) => (batida.selfie_path ? [batida.selfie_path] : [])),
+  )
 
   return (
     <li
+      ref={refDoDia}
       id={ancoraDoDia(dia.dia)}
       className={`rounded-2xl border bg-ink-1 transition-shadow duration-500 ${
         destacado ? 'border-luz/60 ring-2 ring-luz/40' : 'border-hair'
@@ -228,14 +241,11 @@ export function DiaDoPainel({
               </button>
 
               {temFoto ? (
-                <button
-                  type="button"
-                  onClick={() => aoAbrirSelfie(batida)}
-                  aria-label={`Ver a selfie das ${formatarHora(batida.registrado_em)}`}
-                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-hair-2 bg-ink-2 text-mute transition-colors hover:border-hair-3 hover:text-plat focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-luz/60"
-                >
-                  <Camera size={15} aria-hidden="true" />
-                </button>
+                <BotaoDaSelfie
+                  batida={batida}
+                  miniatura={batida.selfie_path ? miniaturas.get(batida.selfie_path) : undefined}
+                  aoAbrir={() => aoAbrirSelfie(batida)}
+                />
               ) : (
                 <span
                   title="Batida inserida pelo admin: não houve foto."
@@ -268,6 +278,50 @@ export function DiaDoPainel({
         </div>
       )}
     </li>
+  )
+}
+
+/**
+ * O botão da foto de uma batida: a miniatura da selfie quando o link já foi
+ * assinado, a câmera enquanto não foi. O nome para o leitor de tela é o do
+ * botão ("Ver a selfie das 08:00"), e por isso a imagem tem `alt` vazio.
+ *
+ * O LINK VENCE, A IMAGEM NÃO SOME. Depois de baixada, a miniatura fica na
+ * memória do navegador. Se ele precisar baixar de novo depois dos dois minutos,
+ * o storage recusa, o `onError` marca aquele link como quebrado e a câmera
+ * volta, sem quadrado quebrado na lista.
+ */
+function BotaoDaSelfie({
+  batida,
+  miniatura,
+  aoAbrir,
+}: {
+  batida: Pick<BatidaDoAdmin, 'registrado_em'>
+  miniatura?: string
+  aoAbrir: () => void
+}) {
+  const [quebrada, setQuebrada] = useState<string | null>(null)
+  const mostrarMiniatura = Boolean(miniatura) && miniatura !== quebrada
+
+  return (
+    <button
+      type="button"
+      onClick={aoAbrir}
+      aria-label={`Ver a selfie das ${formatarHora(batida.registrado_em)}`}
+      className="inline-flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-hair-2 bg-ink-2 text-mute transition-colors hover:border-hair-3 hover:text-plat focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-luz/60"
+    >
+      {mostrarMiniatura ? (
+        <img
+          src={miniatura}
+          alt=""
+          decoding="async"
+          className="h-full w-full object-cover"
+          onError={() => setQuebrada(miniatura ?? null)}
+        />
+      ) : (
+        <Camera size={15} aria-hidden="true" />
+      )}
+    </button>
   )
 }
 

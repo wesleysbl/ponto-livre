@@ -295,6 +295,38 @@ export async function urlAssinadaDaSelfie(selfiePath: string): Promise<string> {
 }
 
 /**
+ * Links temporários para as miniaturas das selfies de um dia, num pedido só.
+ *
+ * UM PEDIDO POR DIA, E NÃO UM POR FOTO
+ * O dia do painel tem até cinco batidas. Assinar uma a uma seria um round-trip
+ * por foto, e um mês aberto no painel multiplicaria isso por vinte dias úteis.
+ * `createSignedUrls` assina a lista inteira de uma vez, com a mesma validade
+ * curta de `SEGUNDOS_DE_VALIDADE_DA_SELFIE` e a mesma policy de SELECT: a foto
+ * que a pessoa não pode ver volta com erro, e ela fica de fora do mapa.
+ *
+ * A FOTO QUE FICOU DE FORA NÃO É ERRO DA TELA
+ * Quem chama mostra o ícone da câmera no lugar da miniatura, e o clique segue
+ * abrindo o visor, que assina de novo e explica a recusa se houver. Só a falha
+ * do pedido inteiro (rede, sessão) vira `ErroDeBatida`.
+ */
+export async function urlsAssinadasDasSelfies(
+  caminhos: readonly string[],
+): Promise<Map<string, string>> {
+  const urls = new Map<string, string>()
+  if (caminhos.length === 0) return urls
+
+  const { data, error } = await supabase.storage
+    .from(BUCKET)
+    .createSignedUrls([...caminhos], SEGUNDOS_DE_VALIDADE_DA_SELFIE)
+
+  if (error) throw new ErroDeBatida(error.message)
+  for (const item of data ?? []) {
+    if (!item.error && item.path && item.signedUrl) urls.set(item.path, item.signedUrl)
+  }
+  return urls
+}
+
+/**
  * Caminho do objeto no bucket, na convenção que a policy do bucket exige e que
  * `ponto_registrar_batida` confere de novo no servidor:
  * `{user_id}/{aaaa}/{mm}/{id-do-registro}.jpg`.

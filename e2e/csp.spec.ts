@@ -18,7 +18,8 @@ import { criarContaComoNoPainel, emailDaExecucao, supabaseLocal, tornarSuperAdmi
  *   - a pessoa bate com a câmera e o GPS simulados: o vídeo ao vivo
  *     (`srcObject`), a prévia da selfie e a miniatura do comprovante
  *     (`blob:`), a foto subindo para o storage;
- *   - o espelho e o painel abrem a selfie pela URL assinada do storage
+ *   - o espelho e o painel abrem a selfie pela URL assinada do storage, e o
+ *     painel mostra a miniatura dela no botão da foto
  *     (img-src);
  *   - o CSV baixado (`blob:`), a folha para imprimir e a administração;
  *   - as fontes do próprio app, o manifesto e o service worker guardando a
@@ -432,9 +433,11 @@ test.describe('o painel, no computador', () => {
       expect(readFileSync(await arquivo.path(), 'utf8')).toContain(ana.email)
     })
 
-    await test.step('o dia da Ana abre a selfie pela URL assinada', async () => {
+    await test.step('o dia da Ana mostra a miniatura e abre a selfie pela URL assinada', async () => {
       await page.getByRole('link').filter({ hasText: ana.email }).click()
       await expect(page.getByRole('heading', { name: ana.nome })).toBeVisible()
+      // A miniatura no botão vem da mesma URL assinada, e a política de conteúdo a deixa carregar.
+      await conferirImagem(page.getByRole('button', { name: `Ver a selfie das ${horaDaBatida}` }).locator('img'), URL_ASSINADA)
       await page.getByRole('button', { name: `Ver a selfie das ${horaDaBatida}` }).click()
       const visor = page.getByRole('dialog', { name: `Selfie da batida das ${horaDaBatida}` })
       await conferirImagem(visor.getByAltText(`Selfie registrada na batida das ${horaDaBatida}`), URL_ASSINADA)

@@ -290,6 +290,16 @@ const simulado = vi.hoisted(() => {
         return {
           createSignedUrl: () =>
             Promise.resolve({ data: { signedUrl: `https://simulado.invalid/${bucket}` }, error: null }),
+          // As miniaturas do painel: o jsdom não tem IntersectionObserver, então o dia assina na hora.
+          createSignedUrls: (caminhos: string[]) =>
+            Promise.resolve({
+              data: caminhos.map((caminho) => ({
+                path: caminho,
+                error: null,
+                signedUrl: `https://simulado.invalid/${bucket}/${caminho}`,
+              })),
+              error: null,
+            }),
           upload: (caminho: string) => {
             // Com `aceitarEscritas` (a batida que grava de propósito), a foto sobe.
             if (estado.aceitarEscritas) {
@@ -1301,6 +1311,17 @@ describe('os nomes de quem decidiu vêm das contas do ponto', () => {
     entrarComo('admin', bancoComPedidoAprovado())
     const tela = await abrir(`/painel/${ANA.id}`)
     expect(tela.texto()).toContain('em atraso, aprovada por Rita')
+    conferirFumaca(tela)
+  })
+
+  it('no painel da pessoa, a selfie aparece em miniatura dentro do botão que abre a foto', async () => {
+    entrarComo('admin', bancoComDados())
+    const tela = await abrir(`/painel/${ANA.id}`)
+    const miniatura = tela.raiz.querySelector('button[aria-label^="Ver a selfie das"] img')
+    expect(miniatura?.getAttribute('src')).toBe(
+      `https://simulado.invalid/ponto-selfies/${ANA.id}/${mes.replace('-', '/')}/r1.jpg`,
+    )
+    expect(miniatura?.getAttribute('alt')).toBe('')
     conferirFumaca(tela)
   })
 

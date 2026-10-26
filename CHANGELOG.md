@@ -6,7 +6,9 @@ Enquanto a versão começar com 0, qualquer versão nova pode pedir cuidado na a
 
 ## Não lançado
 
-Nada ainda.
+### Mudado
+
+- No painel, nos dias de uma pessoa, cada batida mostra a selfie em miniatura no lugar do ícone da câmera, para conferir quem bateu sem abrir foto por foto. O clique continua abrindo a foto grande. As fotos de um dia são assinadas num pedido só, quando o dia chega perto da tela, com os mesmos 2 minutos de validade; sem link, fica a câmera de antes. Sem migration nova: basta atualizar o app. Quem mantém uma cópia modificada pode aplicar o ajuste com o prompt de [`docs/prompts/miniaturas-das-selfies.md`](docs/prompts/miniaturas-das-selfies.md).
 
 ## 0.9.0-beta.1 — 2026-10-24
 
