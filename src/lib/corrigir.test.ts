@@ -99,6 +99,18 @@ describe('a lista de dias da tela da pessoa', () => {
     expect(dias.some((dia) => dia.futuro)).toBe(false)
   })
 
+  it('o feriado nacional leva o nome dele na lista: a segunda 12/10 é Nossa Senhora Aparecida', () => {
+    const { dias } = lista({ inicio: '2026-10-01', fim: '2026-10-31' })
+    expect(dias.find((dia) => dia.dia === '2026-10-12')).toMatchObject({
+      feriado: 'Nossa Senhora Aparecida',
+      fimDeSemana: false,
+      batidas: null,
+    })
+    expect(dias.filter((dia) => dia.feriado).map((dia) => dia.dia)).toEqual(['2026-10-12'])
+    // O sábado continua só fim de semana.
+    expect(dias.find((dia) => dia.dia === '2026-10-10')).toMatchObject({ feriado: null, fimDeSemana: true })
+  })
+
   it('setembro de 2026 tem 30 dias, e fevereiro de 2026, 28 (de 2028, 29)', () => {
     expect(lista({ inicio: '2026-09-01', fim: '2026-09-30' }).dias).toHaveLength(30)
     expect(lista({ inicio: '2026-02-01', fim: '2026-02-28' }).dias).toHaveLength(28)

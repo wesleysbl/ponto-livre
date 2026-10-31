@@ -1916,6 +1916,21 @@ describe('corrigir qualquer dia: todos os dias na tela da pessoa e "Corrigir pon
     conferirFumaca(tela)
   })
 
+  it('o feriado nacional aparece com a etiqueta "feriado", como o fim de semana', async () => {
+    entrarComo('admin', bancoDeAgosto())
+    // Setembro de 2026: a segunda 07/09 é a Independência; o sábado 05/09 é fim de semana.
+    const tela = await abrir(`/painel/${ANA.id}?de=2026-09-01&ate=2026-09-30`)
+    const feriado = textoDe(diaDaLista(tela.raiz, '2026-09-07'))
+    expect(feriado).toContain('feriado · Independência do Brasil')
+    expect(feriado).toContain('Sem batida')
+    expect(feriado).not.toContain('fim de semana')
+    const sabado = textoDe(diaDaLista(tela.raiz, '2026-09-05'))
+    expect(sabado).toContain('fim de semana')
+    expect(sabado).not.toContain('feriado')
+    expect(textoDe(diaDaLista(tela.raiz, '2026-09-08'))).not.toContain('feriado')
+    conferirFumaca(tela)
+  })
+
   it('do sábado vazio, "Inserir batida neste dia" abre a caixa naquele dia, e dia futuro é recusado sem gravar', async () => {
     entrarComo('admin', bancoDeAgosto())
     const tela = await abrir(`/painel/${ANA.id}?de=2026-08-01&ate=2026-08-31`)

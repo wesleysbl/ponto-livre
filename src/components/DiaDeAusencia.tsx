@@ -3,7 +3,7 @@ import { CalendarX2, FileText } from 'lucide-react'
 import { marcaDaAusencia, type Ausencia } from '../lib/ausencias'
 import { ancoraDoDia } from '../lib/corrigir'
 import { rotuloDoDia } from '../lib/horas'
-import { Etiqueta } from './ui'
+import { EtiquetasDoDia } from './EtiquetasDoDia'
 
 /*
  * A AUSÊNCIA NAS LISTAS DE DIAS — no espelho do colaborador e no painel da
@@ -67,18 +67,27 @@ interface PropsDoDia {
   aoAbrirAtestado?: (ausencia: Ausencia) => void
   /** Sábado ou domingo (`DiaDaLista.fimDeSemana`, do painel): ganha a etiqueta. */
   fimDeSemana?: boolean
+  /** O nome do feriado nacional (`DiaDaLista.feriado`, do painel): ganha a etiqueta. */
+  feriado?: string | null
   /** O pé do cartão: as ações do admin sobre o dia. Sem ele, o cartão termina na marca. */
   children?: ReactNode
 }
 
-export function DiaDeAusencia({ dia, ausencias, aoAbrirAtestado, fimDeSemana = false, children }: PropsDoDia) {
+export function DiaDeAusencia({
+  dia,
+  ausencias,
+  aoAbrirAtestado,
+  fimDeSemana = false,
+  feriado = null,
+  children,
+}: PropsDoDia) {
   return (
     <li id={ancoraDoDia(dia)} className="rounded-2xl border border-hair bg-ink-1">
       <div className="flex items-baseline justify-between gap-3 px-4 pt-3.5 pb-2">
         <div className="min-w-0">
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-plat">
             <span className="truncate">{rotuloDoDia(dia)}</span>
-            {fimDeSemana && <Etiqueta tom="neutro">fim de semana</Etiqueta>}
+            <EtiquetasDoDia fimDeSemana={fimDeSemana} feriado={feriado} />
           </p>
           <p className="mt-0.5 font-mono text-[0.62rem] tracking-wider text-faint">ausência</p>
         </div>

@@ -129,7 +129,7 @@ Depois de entrar, quem administra e não bate ponto cai direto no painel. Quem a
 
 ### Os dias de uma pessoa
 
-Toque no cartão da pessoa. A tela mostra **todos os dias do período até hoje**, inclusive sábado, domingo e dia vazio.
+Toque no cartão da pessoa. A tela mostra **todos os dias do período até hoje**, inclusive sábado, domingo e dia vazio. O sábado e o domingo levam a etiqueta **fim de semana**, e o feriado nacional leva **feriado**, com o nome dele (por exemplo, "feriado · Nossa Senhora Aparecida"). Feriado do estado ou da cidade não tem etiqueta: se a empresa não abriu, lance o dia como falta justificada.
 
 ![Os dias de uma pessoa, com Corrigir, Inserir batida neste dia e Lançar falta neste dia](imagens/painel-pessoa.png)
 

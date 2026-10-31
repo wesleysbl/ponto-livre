@@ -728,7 +728,7 @@ export function PainelDaPessoa() {
             o dia vazio compacto (`DiaSemBatida`) é o que a deixa curta.
           */
           <ul className="grid grid-cols-1 gap-2">
-            {diasDaLista.map(({ dia: diaCivil, batidas: dia, ausencias, fimDeSemana, futuro }) => {
+            {diasDaLista.map(({ dia: diaCivil, batidas: dia, ausencias, fimDeSemana, feriado, futuro }) => {
               const inserirNesteDia = (diaDoBotao: string) =>
                 setAjuste({ nome: 'inserir', diaSugerido: diaDoBotao })
               if (dia) {
@@ -737,6 +737,7 @@ export function PainelDaPessoa() {
                     key={diaCivil}
                     dia={dia}
                     fimDeSemana={fimDeSemana}
+                    feriado={feriado}
                     podeInserir={!futuro}
                     ehHoje={diaCivil === hoje}
                     destacado={diaEmFoco?.dia === diaCivil || destaqueDaAncora === diaCivil}
@@ -757,6 +758,7 @@ export function PainelDaPessoa() {
                     key={diaCivil}
                     dia={diaCivil}
                     fimDeSemana={fimDeSemana}
+                    feriado={feriado}
                     ausencias={ausencias}
                     aoAbrirAtestado={setAtestadoAberto}
                   >
@@ -781,6 +783,7 @@ export function PainelDaPessoa() {
                   key={diaCivil}
                   dia={diaCivil}
                   fimDeSemana={fimDeSemana}
+                  feriado={feriado}
                   aoInserirNesteDia={inserirNesteDia}
                   aoLancarFaltaNesteDia={setLancandoEm}
                   pedidos={pedidosPorDia.get(diaCivil)}

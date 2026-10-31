@@ -7,6 +7,7 @@ import { rotuloNaLista } from '../lib/painel'
 import { useMiniaturasDoDia } from '../hooks/useMiniaturasDoDia'
 import { MarcaDeAjuste, MarcaDeAtraso } from './MarcaDaBatida'
 import { MarcaDeAusencia } from './DiaDeAusencia'
+import { EtiquetasDoDia } from './EtiquetasDoDia'
 import { Botao, Etiqueta } from './ui'
 import type { Ausencia } from '../lib/ausencias'
 import type { PedidoDeAtraso } from '../lib/atraso'
@@ -39,7 +40,8 @@ import type { PedidoDeAtraso } from '../lib/atraso'
  * src/lib/corrigir.ts), e o dia sem batida é a linha compacta `DiaSemBatida`,
  * logo abaixo. Cada dia leva o id
  * `dia-AAAA-MM-DD` (`ancoraDoDia`), e o sábado e o domingo levam a etiqueta
- * "fim de semana".
+ * "fim de semana". O feriado nacional leva a etiqueta "feriado", com o nome
+ * dele (`EtiquetasDoDia`).
  *
  * NÃO HÁ AVISO DE RÓTULO TROCADO. A batida inserida depois não entra no fim da
  * fila com o rótulo errado: o banco (`ponto_reordenar_dia`) reorganiza entrada,
@@ -80,6 +82,8 @@ interface Props {
   podeInserir?: boolean
   /** Sábado ou domingo (`DiaDaLista.fimDeSemana`): ganha a etiqueta. */
   fimDeSemana?: boolean
+  /** O nome do feriado nacional (`DiaDaLista.feriado`): ganha a etiqueta "feriado". */
+  feriado?: string | null
   /** `pedido_id -> quem aprovou`, para a marca da batida em atraso. */
   aprovadores?: ReadonlyMap<string, string | null>
   /** Ausências ativas que cobrem este dia: a marca aparece, as horas não mudam. */
@@ -112,6 +116,7 @@ export function DiaDoPainel({
   aoInserirNesteDia,
   podeInserir = true,
   fimDeSemana = false,
+  feriado = null,
   aprovadores,
   ausencias = [],
   aoAbrirAtestado,
@@ -141,7 +146,7 @@ export function DiaDoPainel({
         <div className="min-w-0">
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-plat">
             <span className="truncate">{rotuloDoDia(dia.dia)}</span>
-            {fimDeSemana && <Etiqueta tom="neutro">fim de semana</Etiqueta>}
+            <EtiquetasDoDia fimDeSemana={fimDeSemana} feriado={feriado} />
           </p>
           <p className="mt-0.5 font-mono text-xs text-faint tabular-nums">
             {dia.batidas.length} {dia.batidas.length === 1 ? 'batida' : 'batidas'}
@@ -388,6 +393,8 @@ export function BotaoDoDia({ aoClicar, children }: { aoClicar: () => void; child
 interface PropsDoDiaSemBatida {
   dia: string
   fimDeSemana?: boolean
+  /** O nome do feriado nacional: a linha ganha a etiqueta "feriado", como a do fim de semana. */
+  feriado?: string | null
   aoInserirNesteDia: (dia: string) => void
   aoLancarFaltaNesteDia: (dia: string) => void
   /** Os pedidos de batida em atraso deste dia que esperam decisão. */
@@ -410,6 +417,7 @@ interface PropsDoDiaSemBatida {
 export function DiaSemBatida({
   dia,
   fimDeSemana = false,
+  feriado = null,
   aoInserirNesteDia,
   aoLancarFaltaNesteDia,
   pedidos = [],
@@ -422,7 +430,7 @@ export function DiaSemBatida({
     >
       <p className="flex min-w-0 flex-1 basis-48 flex-wrap items-center gap-x-2 gap-y-1 py-2 text-sm">
         <span className="font-medium text-plat-dim">{rotuloDoDia(dia)}</span>
-        {fimDeSemana && <Etiqueta tom="neutro">fim de semana</Etiqueta>}
+        <EtiquetasDoDia fimDeSemana={fimDeSemana} feriado={feriado} />
         <span className="text-xs text-mute">· Sem batida</span>
       </p>
       <PedidosEsperandoNoDia pedidos={pedidos} aoVer={aoVerPedido} className="basis-full" />

@@ -6,6 +6,10 @@ Enquanto a versão começar com 0, qualquer versão nova pode pedir cuidado na a
 
 ## Não lançado
 
+### Adicionado
+
+- No painel, nos dias de uma pessoa, o feriado nacional aparece com a etiqueta "feriado" e o nome dele ("feriado · Nossa Senhora Aparecida"), como o sábado e o domingo aparecem com "fim de semana". Antes, um feriado numa segunda-feira aparecia como um dia útil qualquer, "Sem batida", e quem fecha o mês precisava lembrar de cabeça que era feriado. Os feriados são os dez nacionais (Confraternização Universal, Paixão de Cristo, Tiradentes, Dia do Trabalho, Independência, Nossa Senhora Aparecida, Finados, Proclamação da República, Consciência Negra e Natal), calculados pelo próprio app, sem cadastro; a Paixão de Cristo segue a data da Páscoa de cada ano. Carnaval e Corpus Christi são ponto facultativo e não entram, e feriado do estado ou da cidade continua sem etiqueta. A etiqueta só marca o dia: o total de horas continua saindo das batidas. Sem migration nova: basta atualizar o app. Quem mantém uma cópia modificada pode aplicar o ajuste com o prompt de [`docs/prompts/feriados-nacionais.md`](docs/prompts/feriados-nacionais.md).
+
 ### Mudado
 
 - No painel, nos dias de uma pessoa, cada batida mostra a selfie em miniatura no lugar do ícone da câmera, para conferir quem bateu sem abrir foto por foto. O clique continua abrindo a foto grande. As fotos de um dia são assinadas num pedido só, quando o dia chega perto da tela, com os mesmos 2 minutos de validade; sem link, fica a câmera de antes. Sem migration nova: basta atualizar o app. Quem mantém uma cópia modificada pode aplicar o ajuste com o prompt de [`docs/prompts/miniaturas-das-selfies.md`](docs/prompts/miniaturas-das-selfies.md).

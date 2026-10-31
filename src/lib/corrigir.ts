@@ -27,6 +27,7 @@ import {
   momentoNoFusoDoLocal,
 } from './formato'
 import { diasDoPeriodo, juntarDiasEAusencias, type Ausencia, type DiaComAusencia } from './ausencias'
+import { feriadoNacional } from './feriados'
 import { ehDiaValido } from './horas'
 import type { Periodo } from './periodo'
 
@@ -46,6 +47,12 @@ export const TETO_DE_DIAS_NA_LISTA = 62
 export interface DiaDaLista<D> extends DiaComAusencia<D> {
   /** Sábado ou domingo. A tela sinaliza: um sábado com batida é o que o RH vai procurar. */
   fimDeSemana: boolean
+  /**
+   * O nome do feriado nacional (`feriados.ts`), ou `null`. A tela põe a
+   * etiqueta "feriado", como a do fim de semana: sem ela, o feriado numa
+   * segunda-feira parecia um dia útil sem batida.
+   */
+  feriado: string | null
   /**
    * Depois de hoje. Só aparece com conteúdo (a ausência lançada adiante, ou uma
    * batida com horário no futuro, que precisa ser corrigida), e nunca com o
@@ -111,6 +118,7 @@ export function listarDiasDoPeriodo<D extends { dia: string }>(entrada: {
   const marcar = (dia: DiaComAusencia<D>): DiaDaLista<D> => ({
     ...dia,
     fimDeSemana: ehFimDeSemana(dia.dia),
+    feriado: feriadoNacional(dia.dia),
     futuro: dia.dia > hoje,
   })
 
