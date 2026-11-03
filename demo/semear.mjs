@@ -36,8 +36,12 @@
  *     sai nas folhas já assinadas; o resto do cabeçalho da folha são os dados
  *     da empresa e o e-mail da conta).
  * A empresa é a Empresa Exemplo Ltda (Rua das Flores, 100, Campinas/SP, sem
- * CNPJ), jornada de 8h com 10 min de tolerância e janela de 60 s, e o local é
- * a "Sede da Empresa Exemplo", no centro de São Paulo, com raio de 150 m.
+ * CNPJ), com a jornada de segunda a sexta, das 8h às 12h e das 13h às 17h,
+ * 10 min de tolerância, janela de 60 s e o saldo calculado a partir do dia 1º
+ * do mês da demonstração; o local é a "Sede da Empresa Exemplo", no centro de
+ * São Paulo, com raio de 150 m. O Gustavo tem jornada própria na ficha: de
+ * segunda a quinta, das 8h às 12h e das 13h às 18h, e na sexta até as 17h (44
+ * horas na semana). Os outros seguem a da empresa.
  *
  * O MÊS DE BATIDAS. Os dias úteis do mês corrente até ontem (sem sábado,
  * domingo e os feriados nacionais de data fixa), 4 batidas por dia, com
@@ -58,6 +62,11 @@
  *     motivo; ele também bate duas vezes da Paulista no penúltimo dia útil;
  *   • o Caio falta no 9º dia útil, com atestado médico (o papel é
  *     `demo/atestado.html`, fictício e dizendo isso em letras grandes);
+ *   • o Gustavo faz um exame das 8h às 10h do 4º dia útil e entra às 10h04: o
+ *     RH lança o atestado POR HORÁRIO, com o papel, e ele abona as duas horas
+ *     da jornada que o exame cobriu;
+ *   • o Gustavo falta no 8º dia útil, sem batida e sem ausência: a falta que o
+ *     saldo cobra, e que a folha dele soma no "Resumo do mês";
  *   • a Daniela esquece a saída do 4º dia útil antes do fim: um dia
  *     incompleto, para o "Antes de fechar" do painel;
  *   • e o Caio pede, hoje, uma batida esquecida, que fica esperando decisão.
@@ -77,9 +86,10 @@
  *   1. TUDO QUE TEM PORTA NO APP PASSA PELA PORTA DO APP, com a sessão de quem
  *      faz: as contas nascem pela função `ponto-contas` (o nome vai para o
  *      `app_metadata`), o super admin pelo `supabase/primeiro-super-admin.sql`,
- *      fichas, configuração, local e administração pelo super admin, o PIN pela
- *      RPC de cada um, e a correção, a inserção e a falta com atestado pela
- *      sessão do RH. O pedido de batida esquecida de hoje é do próprio Caio, pela
+ *      fichas (com a jornada própria), configuração (com a jornada e a data do
+ *      saldo), local e administração pelo super admin, o PIN pela RPC de cada
+ *      um, e a correção, a inserção e os dois atestados pela sessão do RH. O
+ *      pedido de batida esquecida de hoje é do próprio Caio, pela
  *      RPC, com selfie e PIN — como no celular.
  *   2. SÓ O HISTÓRICO "DO APP" ENTRA COMO O DONO DO BANCO, numa transação só,
  *      pelo psql do contêiner. Nela, e só nela, o `postgres` (dono da tabela)
@@ -139,16 +149,36 @@ const PIN_DA_DEMONSTRACAO = '1234'
 const SUPER_ADMIN = { chave: 'sergio', nome: 'Sérgio Almeida', email: 'admin@example.com' }
 const RH = { chave: 'rita', nome: 'Rita Moraes', email: 'rh@example.com' }
 
+/**
+ * Uma jornada no formato do banco (`ponto_configuracao.jornada` e
+ * `ponto_funcionarios.jornada`): um bloco por início e fim, com o dia da
+ * semana de 1 (segunda) a 7 (domingo). `dias` diz em que dias cada par de
+ * blocos vale.
+ */
+function jornada(...trechos) {
+  return trechos.flatMap(({ dias, blocos }) => dias.flatMap((dia) => blocos.map(([inicio, fim]) => ({ dia, inicio, fim }))))
+}
+
+/** A jornada da empresa: de segunda a sexta, das 8h às 12h e das 13h às 17h (8 h por dia). */
+const JORNADA_DA_EMPRESA = jornada({ dias: [1, 2, 3, 4, 5], blocos: [['08:00', '12:00'], ['13:00', '17:00']] })
+
+/** A jornada própria do Gustavo: até as 18h de segunda a quinta e até as 17h na sexta (44 h na semana). */
+const JORNADA_DO_GUSTAVO = jornada(
+  { dias: [1, 2, 3, 4], blocos: [['08:00', '12:00'], ['13:00', '18:00']] },
+  { dias: [5], blocos: [['08:00', '12:00'], ['13:00', '17:00']] },
+)
+
 /*
  * Quem bate ponto. `entrada` e `saida` são o costume de cada um (minutos do
- * dia); o sorteio mexe alguns minutos para cada lado, todo dia.
+ * dia); o sorteio mexe alguns minutos para cada lado, todo dia. `jornada`, só
+ * em quem tem a própria; sem ela, a ficha segue a da empresa.
  */
 const QUEM_BATE = [
   { chave: 'ana', nome: 'Ana Beatriz Rocha', email: 'ana@example.com', cargo: 'Vendas', matricula: '0012', admissao: '2021-02-01', entrada: 7 * 60 + 56, saida: 17 * 60 + 4 },
   { chave: 'bruna', nome: 'Bruna Costa', email: 'bruna@example.com', cargo: 'Compras', matricula: '0018', admissao: '2022-06-13', entrada: 8 * 60, saida: 17 * 60 + 25 },
   { chave: 'caio', nome: 'Caio Mendes', email: 'caio@example.com', cargo: 'Operações', matricula: '0023', admissao: '2023-08-07', entrada: 8 * 60 + 4, saida: 17 * 60 + 52 },
   { chave: 'daniela', nome: 'Daniela Freitas', email: 'daniela@example.com', cargo: 'Administrativo', matricula: '0027', admissao: '2024-01-15', entrada: 7 * 60 + 58, saida: 17 * 60 + 12 },
-  { chave: 'gustavo', nome: 'Gustavo Ramos', email: 'gustavo@example.com', cargo: 'Logística', matricula: '0031', admissao: '2025-03-10', entrada: 8 * 60 + 9, saida: 18 * 60 + 3 },
+  { chave: 'gustavo', nome: 'Gustavo Ramos', email: 'gustavo@example.com', cargo: 'Logística', matricula: '0031', admissao: '2025-03-10', entrada: 8 * 60 + 9, saida: 18 * 60 + 3, jornada: JORNADA_DO_GUSTAVO },
 ]
 
 /** A ficha de quem saiu: sem conta, desativada, com o desligamento no fim do mês anterior ao da demonstração. */
@@ -163,7 +193,9 @@ const EMPRESA = {
   endereco: 'Rua das Flores, 100 - Centro',
   cidade: 'Campinas',
   uf: 'SP',
-  carga_diaria_minutos: 480,
+  // A carga diária não vai: o banco a calcula da jornada (o maior total de um
+  // dia), como na tela. A data do saldo depende do mês e entra na gravação.
+  jornada: JORNADA_DA_EMPRESA,
   tolerancia_minutos: 10,
   janela_duplicidade_segundos: 60,
 }
@@ -425,9 +457,11 @@ function sorteio(texto) {
 /**
  * A selfie de cada pessoa como o app a guardaria: o quadrado do meio do
  * quadro (480×480, a faixa entre o alto da cabeça e os ombros do desenho),
- * em JPEG com a qualidade da captura do app (0,82). E o atestado fictício.
+ * em JPEG com a qualidade da captura do app (0,82). E os atestados fictícios,
+ * um por ausência (`atestados`: a chave de quem, com o nome, o dia e, no
+ * atestado por horário, o intervalo).
  */
-async function desenharArquivos(rostos, atestado) {
+async function desenharArquivos(rostos, atestados) {
   let navegador
   try {
     navegador = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome' })
@@ -442,12 +476,16 @@ async function desenharArquivos(rostos, atestado) {
       selfies.set(rosto, await pagina.screenshot({ type: 'jpeg', quality: 82, clip: { x: 0, y: 60, width: 480, height: 480 } }))
     }
     await pagina.setViewportSize({ width: 900, height: 1200 })
-    const endereco = new URL(pathToFileURL(join(RAIZ, 'demo', 'atestado.html')).href)
-    endereco.searchParams.set('nome', atestado.nome)
-    endereco.searchParams.set('dia', atestado.dia)
-    await pagina.goto(endereco.href)
-    const papel = await pagina.screenshot({ type: 'jpeg', quality: 80 })
-    return { selfies, papel }
+    const papeis = new Map()
+    for (const [chave, atestado] of Object.entries(atestados)) {
+      const endereco = new URL(pathToFileURL(join(RAIZ, 'demo', 'atestado.html')).href)
+      endereco.searchParams.set('nome', atestado.nome)
+      endereco.searchParams.set('dia', atestado.dia)
+      if (atestado.horario) endereco.searchParams.set('horario', atestado.horario)
+      await pagina.goto(endereco.href)
+      papeis.set(chave, await pagina.screenshot({ type: 'jpeg', quality: 80 }))
+    }
+    return { selfies, papeis }
   } finally {
     await navegador.close()
   }
@@ -679,6 +717,18 @@ async function semear() {
     "SELECT to_regclass('public.ponto_super_admins') IS NOT NULL AND to_regclass('public.ponto_registros') IS NOT NULL;",
   ).trim()
   if (estrutura !== 't') abortar('a estrutura do ponto não está no banco local. Rode com --zerar (ou `npm run db:zerar`).')
+  // A jornada, a data do saldo e a ausência por horário são das migrations
+  // seguintes à estrutura: um banco local de antes delas recusaria a semente
+  // no meio do caminho, com a frase de uma coluna que não existe.
+  const migrationsNovas = sqlComoPostgres(`
+    SELECT count(*) = 3 FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND (table_name::text, column_name::text) IN (('ponto_configuracao', 'jornada'), ('ponto_configuracao', 'saldo_a_partir_de'),
+                                                     ('ponto_ausencias', 'modalidade'));
+  `).trim()
+  if (migrationsNovas !== 't') {
+    abortar('o banco local não tem a jornada e a ausência por horário (as migrations de supabase/migrations/ depois da estrutura). Rode com --zerar (ou `npm run db:zerar`).')
+  }
   await esperarAApi()
 
   const emails = [SUPER_ADMIN, RH, ...QUEM_BATE].map((pessoa) => pessoa.email)
@@ -698,22 +748,34 @@ async function semear() {
   const dias = calendario.diasDoMes
   passo(`Mês da demonstração: ${calendario.mes} (${dias.length} dias úteis com batida; ${calendario.todosOsDias.length} no total, até ontem)`)
 
-  // Os dias dos casos especiais (ver o cabeçalho).
+  // Os dias dos casos especiais (ver o cabeçalho). Com 10 dias úteis, o
+  // mínimo, os do Gustavo ainda caem em dias diferentes (3, 5, 7 e 8).
   const caso = {
     anaSemLocalizacao: dias[0],
     anaNaPaulista: dias[1],
+    gustavoComExame: dias[3],
     brunaCorrigida: dias[4],
     gustavoSemVolta: dias[5],
+    gustavoFalta: dias[7],
     caioComAtestado: dias[8],
     danielaIncompleta: dias[dias.length - 4],
     gustavoNaPaulista: dias[dias.length - 2],
   }
+  /** O exame do Gustavo: das 8h às 10h, o começo da jornada dele, e a entrada logo depois. */
+  const EXAME_DO_GUSTAVO = { inicio: '08:00', fim: '10:00', entrada: 10 * 60 + 4 }
+  // A data do saldo: o dia 1º do mês da demonstração, o mesmo dia em que as
+  // fichas passam a bater ponto. O mês inteiro é cobrado, faltas inclusive.
+  const primeiroDia = `${calendario.mes}-01`
 
-  passo('Desenhando as selfies e o atestado no Chrome')
-  const arquivos = await desenharArquivos(
-    QUEM_BATE.map((pessoa) => pessoa.chave),
-    { nome: 'Caio Mendes', dia: dataBrasileira(caso.caioComAtestado) },
-  )
+  passo('Desenhando as selfies e os atestados no Chrome')
+  const arquivos = await desenharArquivos(QUEM_BATE.map((pessoa) => pessoa.chave), {
+    caio: { nome: 'Caio Mendes', dia: dataBrasileira(caso.caioComAtestado) },
+    gustavo: {
+      nome: 'Gustavo Ramos',
+      dia: dataBrasileira(caso.gustavoComExame),
+      horario: `das ${EXAME_DO_GUSTAVO.inicio} às ${EXAME_DO_GUSTAVO.fim}`,
+    },
+  })
 
   /* -- O super admin, como na instalação --------------------------- */
   passo(`Super admin: ${SUPER_ADMIN.nome} <${SUPER_ADMIN.email}>, criado como no "Add user" do painel e posto na lista pelo primeiro-super-admin.sql`)
@@ -733,10 +795,10 @@ async function semear() {
   await api('POST', '/rest/v1/rpc/ponto_definir_pin', { ...comoSuperAdmin, corpo: { p_pin: PIN_DA_DEMONSTRACAO } })
 
   /* -- A empresa, a jornada e o local, pelo super admin ------------- */
-  passo(`Empresa, jornada e local: ${EMPRESA.razao_social}; ${LOCAL.nome}, raio de ${LOCAL.raio_metros} m`)
+  passo(`Empresa, jornada e local: ${EMPRESA.razao_social}, saldo calculado a partir de ${dataBrasileira(primeiroDia)}; ${LOCAL.nome}, raio de ${LOCAL.raio_metros} m`)
   await api('POST', '/rest/v1/ponto_configuracao?on_conflict=id', {
     ...comoSuperAdmin,
-    corpo: EMPRESA,
+    corpo: { ...EMPRESA, saldo_a_partir_de: primeiroDia },
     cabecalhos: { Prefer: 'resolution=merge-duplicates,return=minimal' },
   })
   // Como a tela do local: atualiza o ativo, se houver (o banco aceita um ativo por vez), ou cria.
@@ -748,8 +810,7 @@ async function semear() {
   }
 
   /* -- As fichas e as contas --------------------------------------- */
-  passo('Fichas de RH, contas (pela função de contas, com o nome no app_metadata) e o RH administrando')
-  const primeiroDia = `${calendario.mes}-01`
+  passo('Fichas de RH (a do Gustavo com jornada própria), contas (pela função de contas, com o nome no app_metadata) e o RH administrando')
   for (const pessoa of QUEM_BATE) {
     const [ficha] = await api('POST', '/rest/v1/ponto_funcionarios', {
       ...comoSuperAdmin,
@@ -759,6 +820,8 @@ async function semear() {
         matricula: pessoa.matricula,
         admissao: pessoa.admissao,
         bate_ponto_desde: primeiroDia,
+        // Nula segue a da empresa, como o "Usar a da empresa" da ficha.
+        jornada: pessoa.jornada ?? null,
       },
       cabecalhos: { Prefer: 'return=representation' },
     })
@@ -811,8 +874,10 @@ async function semear() {
       if (pessoa.chave === 'ana' && dia === caso.anaNaPaulista) ajustes = { naPaulista: ['entrada', 'saida_almoco'] }
       // A Bruna recebeu um fornecedor na portaria antes de bater: a entrada saiu às 8h47.
       if (pessoa.chave === 'bruna' && dia === caso.brunaCorrigida) ajustes = { horarios: { entrada: 8 * 60 + 47 } }
+      if (pessoa.chave === 'gustavo' && dia === caso.gustavoComExame) ajustes = { horarios: { entrada: EXAME_DO_GUSTAVO.entrada } }
       if (pessoa.chave === 'gustavo' && dia === caso.gustavoSemVolta) ajustes = { sem: ['volta_almoco'] }
       if (pessoa.chave === 'gustavo' && dia === caso.gustavoNaPaulista) ajustes = { naPaulista: ['entrada', 'saida_almoco'] }
+      if (pessoa.chave === 'gustavo' && dia === caso.gustavoFalta) continue
       if (pessoa.chave === 'caio' && dia === caso.caioComAtestado) continue
       if (pessoa.chave === 'daniela' && dia === caso.danielaIncompleta) ajustes = { sem: ['saida'] }
       historico.push(...batidasDoDia(pessoa, usuarioId, dia, ajustes))
@@ -860,22 +925,41 @@ async function semear() {
     cabecalhos: { Prefer: 'return=minimal' },
   })
 
-  passo(`RH lança a falta do Caio em ${dataBrasileira(caso.caioComAtestado)}, atestado médico com a foto do papel fictício`)
-  const ausenciaId = randomUUID()
-  const caminhoDoAtestado = `${ids.get('caio')}/${ausenciaId}.jpg`
-  await api('POST', `/storage/v1/object/ponto-atestados/${caminhoDoAtestado}`, { ...comoRh, corpo: arquivos.papel, tipo: 'image/jpeg' })
-  await api('POST', '/rest/v1/ponto_ausencias', {
-    ...comoRh,
-    corpo: {
-      id: ausenciaId,
-      usuario_id: ids.get('caio'),
-      dia_inicio: caso.caioComAtestado,
-      dia_fim: caso.caioComAtestado,
-      tipo: 'atestado_medico',
-      observacao: 'Consulta médica; atestado de um dia.',
-      atestado_path: caminhoDoAtestado,
-    },
-    cabecalhos: { Prefer: 'return=minimal' },
+  // Os dois atestados, como a caixa de lançar falta os grava: o papel sobe ao
+  // bucket com o id da ausência no nome, e a ausência vem depois, com as
+  // colunas da modalidade (por dias, sem horário; por horário, um dia só).
+  async function lancarAtestado(chave, { modalidade, dia, horaInicio = null, horaFim = null, observacao }) {
+    const ausenciaId = randomUUID()
+    const caminhoDoAtestado = `${ids.get(chave)}/${ausenciaId}.jpg`
+    await api('POST', `/storage/v1/object/ponto-atestados/${caminhoDoAtestado}`, { ...comoRh, corpo: arquivos.papeis.get(chave), tipo: 'image/jpeg' })
+    await api('POST', '/rest/v1/ponto_ausencias', {
+      ...comoRh,
+      corpo: {
+        id: ausenciaId,
+        usuario_id: ids.get(chave),
+        dia_inicio: dia,
+        dia_fim: dia,
+        tipo: 'atestado_medico',
+        modalidade,
+        hora_inicio: horaInicio,
+        hora_fim: horaFim,
+        observacao,
+        atestado_path: caminhoDoAtestado,
+      },
+      cabecalhos: { Prefer: 'return=minimal' },
+    })
+  }
+
+  passo(`RH lança a falta do Caio em ${dataBrasileira(caso.caioComAtestado)}, atestado médico de um dia, com a foto do papel fictício`)
+  await lancarAtestado('caio', { modalidade: 'dias', dia: caso.caioComAtestado, observacao: 'Consulta médica; atestado de um dia.' })
+
+  passo(`RH lança o atestado por horário do Gustavo em ${dataBrasileira(caso.gustavoComExame)}, ${EXAME_DO_GUSTAVO.inicio} às ${EXAME_DO_GUSTAVO.fim}, com a foto do papel fictício`)
+  await lancarAtestado('gustavo', {
+    modalidade: 'horario',
+    dia: caso.gustavoComExame,
+    horaInicio: EXAME_DO_GUSTAVO.inicio,
+    horaFim: EXAME_DO_GUSTAVO.fim,
+    observacao: 'Exame de sangue em jejum pela manhã; atestado de comparecimento.',
   })
 
   /* -- O pedido de hoje, pela RPC do Caio, com selfie e PIN --------- */
@@ -916,23 +1000,41 @@ async function semear() {
 
   /* -- O resumo (só das contas da demonstração) --------------------- */
   const daDemonstracao = `(${[...ids.values()].map((id) => `${textoSql(id)}::uuid`).join(', ')})`
-  const [app, doRhNoPonto, correcoes, ausencias, pendentes, selfies] = sqlComoPostgres(`
+  const [app, doRhNoPonto, correcoes, ausencias, porHorario, pendentes, selfies, saldoDesde, carga, comJornadaPropria, batidasNaFalta] =
+    sqlComoPostgres(`
     SELECT (SELECT count(*) FROM public.ponto_registros WHERE origem = 'app' AND usuario_id IN ${daDemonstracao}),
            (SELECT count(*) FROM public.ponto_registros WHERE origem = 'ajuste_admin' AND usuario_id IN ${daDemonstracao}),
            (SELECT count(*) FROM public.ponto_correcoes WHERE usuario_id IN ${daDemonstracao}),
            (SELECT count(*) FROM public.ponto_ausencias WHERE usuario_id IN ${daDemonstracao}),
+           (SELECT count(*) FROM public.ponto_ausencias WHERE modalidade = 'horario' AND usuario_id IN ${daDemonstracao}),
            (SELECT count(*) FROM public.ponto_pedidos_atraso WHERE estado = 'pendente' AND usuario_id IN ${daDemonstracao}),
            (SELECT count(*) FROM storage.objects WHERE bucket_id = 'ponto-selfies'
-              AND split_part(name, '/', 1) IN (${[...ids.values()].map(textoSql).join(', ')}));
+              AND split_part(name, '/', 1) IN (${[...ids.values()].map(textoSql).join(', ')})),
+           (SELECT saldo_a_partir_de FROM public.ponto_configuracao WHERE id = 1),
+           (SELECT carga_diaria_minutos FROM public.ponto_configuracao WHERE id = 1),
+           (SELECT count(*) FROM public.ponto_funcionarios WHERE jornada IS NOT NULL AND usuario_id IN ${daDemonstracao}),
+           (SELECT count(*) FROM public.ponto_registros
+             WHERE usuario_id = ${textoSql(ids.get('gustavo'))}::uuid AND dia_civil = ${textoSql(caso.gustavoFalta)}::date);
   `)
-    .trim()
-    .split('|')
+      .trim()
+      .split('|')
+
+  // A conferência do que a semente acrescenta para o saldo: se o banco não
+  // gravou como o cabeçalho promete, os prints mostrariam outra coisa, calados.
+  const lido = { ausencias, porHorario, saldoDesde, carga, comJornadaPropria, batidasNaFalta }
+  const esperado = { ausencias: '2', porHorario: '1', saldoDesde: primeiroDia, carga: '480', comJornadaPropria: '1', batidasNaFalta: '0' }
+  const diferentes = Object.keys(esperado).filter((nome) => lido[nome] !== esperado[nome])
+  if (diferentes.length > 0) {
+    abortar(`a conferência do fim não bate: ${diferentes.map((nome) => `${nome} = ${lido[nome]}, e era ${esperado[nome]}`).join('; ')}.`)
+  }
 
   console.log(`
 Demonstração semeada no Supabase local.
   ${app} batidas do app e ${doRhNoPonto} lançada pelo RH; ${correcoes} linhas na trilha de correções
-  (a correção da Bruna e a reorganização do dia do Gustavo); ${ausencias} falta com atestado;
+  (a correção da Bruna e a reorganização do dia do Gustavo); ${ausencias} atestados (o de um dia do Caio
+  e o do Gustavo, por horário); a falta do Gustavo em ${dataBrasileira(caso.gustavoFalta)}, sem batida;
   ${pendentes} pedido de batida esquecida esperando decisão; ${selfies} selfies no bucket.
+  Jornada da empresa de seg a sex, 8h por dia, e a própria do Gustavo; saldo a partir de ${dataBrasileira(saldoDesde)}.
 
 Contas (senha ${SENHA_DA_DEMONSTRACAO}, PIN ${PIN_DA_DEMONSTRACAO} — só deste banco local):
   ${SUPER_ADMIN.email.padEnd(22)} ${SUPER_ADMIN.nome}, super admin

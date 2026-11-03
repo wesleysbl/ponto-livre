@@ -15,7 +15,9 @@
   falta.
 
   O nome e o dia vêm do endereço (`?nome=Caio%20Mendes&dia=14/10/2026`), para o
-  papel dizer o mesmo que a ausência lançada.
+  papel dizer o mesmo que a ausência lançada. No atestado por horário, o
+  intervalo também (`&horario=das%2008:00%20às%2010:00`), e o afastamento passa
+  a ser daquele horário, e não do dia.
 -->
 <style>
   html, body { margin: 0; background: #d9d4c7; }
@@ -55,7 +57,7 @@
     <div class="aviso">ATESTADO — EXEMPLO FICTÍCIO</div>
     <h1>ATESTADO MÉDICO</h1>
     <p>Atesto, para os devidos fins, que <strong id="nome">a pessoa do exemplo</strong> esteve em consulta
-      no dia <strong id="dia">—</strong> e precisa se afastar das atividades por 1 (um) dia.</p>
+      no dia <strong id="dia">dd/mm/aaaa</strong><span id="horario"></span> e precisa se afastar das atividades <span id="afastamento">por 1 (um) dia</span>.</p>
     <p>Este papel foi desenhado para a demonstração do Ponto Livre. Não vale como atestado.</p>
     <div class="assinatura">Médica de exemplo (fictícia)</div>
     <div class="rodape">Sem nome, sem registro profissional e sem endereço de verdade: só um exemplo.</div>
@@ -65,6 +67,10 @@
     const parametros = new URLSearchParams(location.search)
     if (parametros.get('nome')) document.getElementById('nome').textContent = parametros.get('nome')
     if (parametros.get('dia')) document.getElementById('dia').textContent = parametros.get('dia')
+    if (parametros.get('horario')) {
+      document.getElementById('horario').textContent = `, ${parametros.get('horario')},`
+      document.getElementById('afastamento').textContent = 'nesse horário'
+    }
   </script>
 </body>
 </html>
