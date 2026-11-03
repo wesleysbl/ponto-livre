@@ -2,7 +2,7 @@
 
 Registro de ponto pelo celular, com selfie, PIN e localização. O RH confere, corrige, fecha e imprime o mês.
 
-`versão 0.9.0-beta.1` · `licença MIT` · `beta`
+`versão 0.10.0-beta.1` · `licença MIT` · `beta`
 
 > [!WARNING]
 > **Beta.** Este projeto está em beta. Ele nasceu de um sistema em uso real numa empresa, mas ainda pode precisar de melhorias — veja [Limitações](#limitações-conhecidas-beta).

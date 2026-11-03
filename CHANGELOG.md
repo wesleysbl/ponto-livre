@@ -6,6 +6,10 @@ Enquanto a versão começar com 0, qualquer versão nova pode pedir cuidado na a
 
 ## Não lançado
 
+Nada ainda.
+
+## 0.10.0-beta.1 - 2026-11-03
+
 **Esta versão muda o banco.** Ela traz duas migrations novas, que se aplicam **antes** de publicar o app novo: veja [Como atualizar](#como-atualizar), no fim desta seção.
 
 ### Adicionado
@@ -79,7 +83,7 @@ Enquanto a versão começar com 0, qualquer versão nova pode pedir cuidado na a
 - O "Abonado" do resumo do saldo soma só os dias cobrados; o total com abono (e o total da coluna Abonado da folha) soma o abono do mês inteiro. Num mês todo cobrado, os dois são iguais.
 - No dia incompleto, a linha do saldo e o CSV mostram o abonado do dia, mas ele fica fora do total até alguém corrigir a batida.
 
-## 0.9.0-beta.1 — 2026-10-24
+## 0.9.0-beta.1 - 2026-10-24
 
 Primeira versão aberta, em beta. O código nasceu de um sistema de ponto em uso real numa empresa e serve a qualquer empresa, cada uma no seu próprio Supabase.
 
