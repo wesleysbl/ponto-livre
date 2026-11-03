@@ -210,6 +210,13 @@ interface ComoGuardar {
    * cresce só para este print, até caber a caixa com a margem, e volta depois.
    */
   crescer?: boolean
+  /**
+   * As linhas de uma lista que passa do fim da janela. O print é a janela, de
+   * cima, cortado embaixo da última linha que cabe inteira: o corte cai entre
+   * duas linhas, e não no meio de uma (um horário pela metade parece defeito
+   * da tela, e não do print).
+   */
+  linhas?: Locator
 }
 
 /**
@@ -221,7 +228,7 @@ interface ComoGuardar {
 async function guardar(
   pagina: Page,
   nome: string,
-  { recorte, coluna, margem = 24, inteira = false, crescer = false }: ComoGuardar = {},
+  { recorte, coluna, margem = 24, inteira = false, crescer = false, linhas }: ComoGuardar = {},
 ): Promise<void> {
   const caminho = join(PASTA, `${nome}.png`)
   await pagina.mouse.move(0, 0)
@@ -236,6 +243,15 @@ async function guardar(
     const largura = Math.min(janela.width - x, Math.ceil(caixa.width + 2 * margem))
     const altura = inteira ? await pagina.evaluate(() => document.documentElement.scrollHeight) : janela.height
     await pagina.screenshot({ path: caminho, fullPage: inteira, clip: { x, y: 0, width: largura, height: altura }, animations: 'disabled' })
+    return
+  }
+
+  if (linhas) {
+    const fundos = await linhas.evaluateAll((todas) => todas.map((linha) => linha.getBoundingClientRect().bottom))
+    const inteiras = fundos.filter((fundo) => fundo > 0 && fundo <= janela.height)
+    if (inteiras.length === 0) throw new Error(`Nenhuma linha cabe inteira na janela do print ${nome}.`)
+    const altura = Math.floor(Math.max(...inteiras))
+    await pagina.screenshot({ path: caminho, clip: { x: 0, y: 0, width: janela.width, height: altura }, animations: 'disabled' })
     return
   }
 
@@ -591,7 +607,9 @@ test.describe('o celular de quem bate', () => {
       }
       await expect(page.getByText(/^\d+ dias com batida/)).toBeVisible()
       await expect(page.getByText('sem localização').first()).toBeVisible()
-      await guardar(page, 'celular-espelho')
+      // O mês passa do fim da janela: o corte cai embaixo da última batida
+      // (ou do último dia) que cabe inteira.
+      await guardar(page, 'celular-espelho', { linhas: page.locator('main li') })
       await page.getByRole('button', { name: 'Bater ponto' }).click()
     })
 
