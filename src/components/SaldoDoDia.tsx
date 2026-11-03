@@ -102,6 +102,10 @@ export function LinhaDoSaldo({ saldo, className = 'px-4 pb-2' }: { saldo: SaldoD
  * escrita embaixo: "6h01 trabalhadas + 0h59 de atestado", ou "horas de
  * atestado" no dia sem batida. Sem saldo (as regras não carregaram), é o
  * trabalhado.
+ *
+ * A CONTA QUEBRA EM DUAS LINHAS NO CELULAR (`max-w-28`, até `sm`). O total
+ * não encolhe, e numa linha só a conta ocupa uns 180 px: a 320 px, o nome do
+ * dia ao lado ficava em "Seg, …", e ninguém sabia de que dia era o cartão.
  */
 export function TotalDoDia({ trabalhado, saldo }: { trabalhado: number; saldo?: SaldoDoDia }) {
   const abonado = saldo && !saldo.incompleto ? saldo.abonado : 0
@@ -112,7 +116,7 @@ export function TotalDoDia({ trabalhado, saldo }: { trabalhado: number; saldo?: 
   return (
     <span className="shrink-0 text-right">
       <span className="block font-mono text-lg text-plat tabular-nums">{formatarDuracao(trabalhado + abonado)}</span>
-      <span className="block text-[0.68rem] leading-snug text-mute tabular-nums">
+      <span className="block max-w-28 text-[0.68rem] leading-snug text-mute tabular-nums sm:max-w-none">
         {trabalhado > 0
           ? `${formatarDuracao(trabalhado)} trabalhadas + ${formatarDuracao(abonado)} ${rotulo}`
           : `horas ${rotulo}`}

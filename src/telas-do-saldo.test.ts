@@ -414,6 +414,10 @@ describe('o total do dia e do período somam o abono', () => {
     const saldo = saldoDe(QUARTA, calcularSaldoDoMes('2026-10', batidas, [atestado], REGRAS))
     const html = texto(desenhar(createElement(TotalDoDia, { trabalhado: saldo.trabalhado, saldo })))
     expect(html).toBe(' 7h00 6h01 trabalhadas + 0h59 de atestado ')
+    // No celular a conta quebra em duas linhas: numa só, a 320 px, o nome do dia ao lado virava "Seg, …".
+    expect(desenhar(createElement(TotalDoDia, { trabalhado: saldo.trabalhado, saldo }))).toMatch(
+      /<span class="[^"]*\bmax-w-28\b[^"]*\bsm:max-w-none\b[^"]*">6h01 trabalhadas/,
+    )
     // Sem saldo, o total é o trabalhado.
     expect(texto(desenhar(createElement(TotalDoDia, { trabalhado: saldo.trabalhado })))).toBe(' 6h01 ')
   })
