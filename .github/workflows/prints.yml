@@ -97,6 +97,13 @@ jobs:
       # Brasília por conta própria; aqui é para o `date` dos passos do relógio
       # e do log falar a mesma hora que as telas.
       TZ: America/Sao_Paulo
+      # A língua do Chrome. Os campos de data e de hora do navegador seguem a
+      # língua do próprio Chrome, e não a da página: o `locale: 'pt-BR'` do
+      # `playwright.config.ts` muda a página, mas não esses campos. No Linux, o
+      # Chrome a lê do ambiente. Sem esta linha, o runner, em inglês, mostraria
+      # "10/30/2026" e "08:00 AM", e o horário sairia cortado no editor da
+      # semana.
+      LANGUAGE: pt_BR
 
     steps:
       - name: Baixar o código
