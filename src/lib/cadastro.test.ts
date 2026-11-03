@@ -7,6 +7,7 @@ import {
   descreverVinculo,
   escreverData,
   fichaDaSessao,
+  mesmaConta,
   filtrarFichas,
   formatarCpf,
   lerData,
@@ -338,6 +339,24 @@ describe('fichaDaSessao: a ficha ligada à conta de quem está logado', () => {
     expect(fichaDaSessao(null, SESSAO)).toBe(false)
     expect(fichaDaSessao(SESSAO, null)).toBe(false)
     expect(fichaDaSessao(null, null)).toBe(false)
+    expect(fichaDaSessao('', '')).toBe(false)
+  })
+
+  it('o id que vem da URL em maiúsculas ainda é a própria conta: o UUID não diferencia', () => {
+    expect(fichaDaSessao(SESSAO.toUpperCase(), SESSAO)).toBe(true)
+    expect(fichaDaSessao(SESSAO, SESSAO.toUpperCase())).toBe(true)
+    expect(fichaDaSessao('00000000-0000-4000-8000-00000000000A', '00000000-0000-4000-8000-00000000000a')).toBe(true)
+    expect(fichaDaSessao('00000000-0000-4000-8000-00000000000A', '00000000-0000-4000-8000-00000000000b')).toBe(false)
+  })
+})
+
+describe('mesmaConta: os dois ids são da mesma conta', () => {
+  it('compara sem diferenciar maiúsculas de minúsculas, e vazio ou nulo nunca é conta', () => {
+    expect(mesmaConta('u-ana', 'U-ANA')).toBe(true)
+    expect(mesmaConta('u-ana', 'u-bruno')).toBe(false)
+    expect(mesmaConta('', '')).toBe(false)
+    expect(mesmaConta(null, 'u-ana')).toBe(false)
+    expect(mesmaConta('u-ana', null)).toBe(false)
   })
 })
 

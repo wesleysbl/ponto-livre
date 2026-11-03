@@ -179,10 +179,22 @@ export function trocarOrigemDaJornada(
  * (`ponto_funcionarios_guardar_propria_ficha`); a tela usa esta resposta só
  * para mostrar as duas bloqueadas, com o porquê, e para não mandá-las.
  *
- * Sem sessão ou ficha sem conta, não é a própria.
+ * Sem sessão ou ficha sem conta, não é a própria. A comparação é a de
+ * `mesmaConta`: o id da tela da pessoa vem da URL, e pode chegar em maiúsculas.
  */
 export function fichaDaSessao(usuarioDaFicha: string | null, usuarioDaSessao: string | null): boolean {
-  return usuarioDaFicha !== null && usuarioDaSessao !== null && usuarioDaFicha === usuarioDaSessao
+  return mesmaConta(usuarioDaFicha, usuarioDaSessao)
+}
+
+/**
+ * Os dois ids são da mesma conta? O id é um UUID, e o UUID não diferencia
+ * maiúsculas de minúsculas: o banco devolve em minúsculas, mas o da tela da
+ * pessoa vem da URL (`/painel/<id>`), que qualquer um digita ou cola. Vazio ou
+ * nulo nunca é conta nenhuma.
+ */
+export function mesmaConta(uma: string | null, outra: string | null): boolean {
+  if (!uma || !outra) return false
+  return uma.toLowerCase() === outra.toLowerCase()
 }
 
 /* ------------------------------------------------------------------ */
