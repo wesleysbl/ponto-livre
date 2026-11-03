@@ -6,7 +6,9 @@ O prompt abaixo é para quem mantém **uma cópia modificada** e prefere que um 
 
 ## O que muda
 
-Nos dias de uma pessoa, no painel, o sábado e o domingo levam a etiqueta "fim de semana", mas o feriado não levava nada: um feriado numa segunda-feira aparecia como um dia útil qualquer, "Sem batida". Agora o feriado nacional leva a etiqueta "feriado", com o nome dele ("feriado · Nossa Senhora Aparecida"). A etiqueta só marca o dia: o total de horas não muda.
+Nos dias de uma pessoa, no painel, o sábado e o domingo levam a etiqueta "fim de semana", mas o feriado não levava nada: um feriado numa segunda-feira aparecia como um dia útil qualquer, "Sem batida". Agora o feriado nacional leva a etiqueta "feriado", com o nome dele ("feriado · Nossa Senhora Aparecida").
+
+Este prompt aplica só a etiqueta: numa cópia sem o saldo de horas, nenhuma conta muda. No Ponto Livre de hoje, o feriado nacional também entra no saldo, como dia sem jornada (sem previsto e sem falta, e o que se trabalha nele é hora extra). Essa parte vem com a jornada e o saldo, no prompt [`jornada-e-saldo.md`](jornada-e-saldo.md), que usa a mesma `feriadoNacional` criada aqui. Se a sua cópia já tem o saldo do Ponto Livre, não use este prompt: ela já tem os feriados.
 
 ## O prompt
 
@@ -23,7 +25,9 @@ ganham "fim de semana".
 
 REGRAS QUE NÃO PODEM MUDAR
 - Sem banco, sem rede e sem migration: os feriados são calculados no app.
-- O total de horas não muda: a etiqueta só marca o dia.
+- Neste ajuste, a etiqueta só marca o dia: nenhuma conta de horas muda. (No
+  Ponto Livre com o saldo de horas, o feriado nacional também é dia sem
+  jornada no saldo; isso vem do prompt jornada-e-saldo.md, e não deste.)
 - Só os dez feriados nacionais: 01/01 Confraternização Universal, Paixão de
   Cristo (a sexta antes do domingo de Páscoa), 21/04 Tiradentes, 01/05 Dia do
   Trabalho, 07/09 Independência do Brasil, 12/10 Nossa Senhora Aparecida,
