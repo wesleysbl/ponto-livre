@@ -17,13 +17,17 @@ Todo sistema de ponto escolhe entre coisas que não dá para ter juntas: mais co
 | [9](#9-a-ficha-é-separada-da-conta) | A ficha é separada da conta | o cadastro de RH existe antes e depois do login |
 | [10](#10-uma-conta-é-uma-pessoa) | Uma conta é uma pessoa | nada de conta dividida |
 | [11](#11-quem-recusa-é-o-banco-não-a-tela) | Quem recusa é o banco | a tela ajuda; a regra mora no Postgres |
-| [12](#12-uma-conta-de-horas-só) | Uma conta de horas só | o espelho, o painel, o CSV e a folha somam igual |
+| [12](#12-uma-conta-de-horas-só) | Uma conta de horas só | o espelho, o painel, o CSV e a folha somam e saldam igual |
 | [13](#13-sem-backend-próprio) | Sem backend próprio | o app fala direto com o Supabase |
 | [14](#14-pwa-e-não-app-de-loja) | PWA, e não app de loja | instala pelo navegador e atualiza sozinho |
 | [15](#15-marca-configurável) | Marca configurável | o nome e o slogan são da empresa que instala |
 | [16](#16-dia-com-batida-faltando-não-soma) | Dia com batida faltando não soma | melhor zero do que um número inventado |
 | [17](#17-a-batida-esquecida-é-um-pedido) | A batida esquecida é um pedido | só vira batida quando alguém aprova |
 | [18](#18-o-super-admin-nasce-por-sql) | O super admin nasce por SQL | ninguém se promove pela internet |
+| [19](#19-o-saldo-começa-numa-data) | O saldo começa numa data | atualizar não cria falta nos meses de antes |
+| [20](#20-a-jornada-de-quem-já-usava-nasce-da-carga) | A jornada de quem já usava nasce da carga | o saldo sai certo desde o primeiro dia |
+| [21](#21-ninguém-decide-o-próprio-ponto) | Ninguém decide o próprio ponto | nem a batida, nem a jornada, nem a ausência |
+| [22](#22-o-csv-cresce-no-fim) | O CSV cresce no fim | a planilha de ontem continua lendo o arquivo de hoje |
 
 ---
 
@@ -130,11 +134,11 @@ Todo sistema de ponto escolhe entre coisas que não dá para ter juntas: mais co
 
 ## 12. Uma conta de horas só
 
-**O que é.** As horas são somadas num lugar só, [`src/lib/horas.ts`](../src/lib/horas.ts). O espelho do funcionário, o painel do RH, o CSV e a folha impressa usam as mesmas funções.
+**O que é.** As horas são somadas num lugar só, [`src/lib/horas.ts`](../src/lib/horas.ts), e o saldo é calculado num lugar só, [`src/lib/saldo.ts`](../src/lib/saldo.ts), por cima dessa soma: o previsto, o abono, o atraso, a falta, o saldo do dia e o resumo do mês. As regras de cada pessoa (a jornada, a tolerância e o primeiro dia cobrado) se montam numa função só, `regrasDoSaldo`. O espelho do funcionário, o painel do RH, o CSV e a folha impressa usam as mesmas funções. A conta é pura: sem banco, sem tela e sem relógio, com o "hoje" recebido de fora.
 
-**Por quê.** Se a soma morasse em dois lugares, o primeiro conserto num deles faria o celular e a folha discordarem sobre quantas horas a pessoa trabalhou. Num sistema de prova, essa é a pior divergência possível, e ela apareceria meses depois, numa discussão, e não num teste.
+**Por quê.** Se a soma ou o saldo morassem em dois lugares, o primeiro conserto num deles faria o celular e a folha discordarem sobre quantas horas a pessoa trabalhou, ou sobre quanto ela deve. Num sistema de prova, essa é a pior divergência possível, e ela apareceria meses depois, numa discussão, e não num teste. Sem relógio dentro, a conta de um dia é a mesma em qualquer aparelho e em qualquer teste. E o saldo não fica gravado: ele é refeito a cada leitura, então cancelar um atestado ou corrigir a jornada refaz o saldo sem nenhum passo a mais.
 
-**O que se troca.** Não dá para ter "uma regra só no CSV". Toda mudança na conta muda as quatro telas de uma vez, que é justamente o ponto.
+**O que se troca.** Não dá para ter "uma regra só no CSV". Toda mudança na conta muda as quatro telas de uma vez, que é justamente o ponto. E, como o saldo é refeito a cada leitura, mudar a jornada recalcula também os dias que já passaram: a jornada não tem data de vigência.
 
 ## 13. Sem backend próprio
 
@@ -183,3 +187,35 @@ Todo sistema de ponto escolhe entre coisas que não dá para ter juntas: mais co
 **Por quê.** O super admin cria contas, liga fichas e escolhe quem administra. Quem conseguisse se pôr nessa lista pela internet mandaria em tudo. Deixando a porta só no banco, ela só abre para quem já tem acesso ao projeto.
 
 **O que se troca.** Quem instala precisa rodar um SQL uma vez, e trocar de super admin pede acesso ao painel do Supabase.
+
+## 19. O saldo começa numa data
+
+**O que é.** A configuração tem a data **"Saldo calculado a partir de"**. O saldo de cada pessoa (o previsto, a falta, as horas extras e as horas negativas) começa na mais nova entre essa data e a "Passou a bater ponto aqui em" da ficha. Na atualização que trouxe o saldo, a data nasceu com o dia em que a migration rodou; numa instalação nova, ela nasce com o dia em que a configuração é gravada pela primeira vez. Quem administra pode recuar a data, e a tela avisa, antes de salvar, que os dias desde lá passam a ser cobrados.
+
+**Por quê.** Antes do saldo, a data da ficha era só registro, e muita ficha tem a data da admissão, de anos atrás. Começar o saldo pela ficha faria a atualização acusar falta em todos os dias de todos os meses anteriores, de gente que nunca bateu ponto neste sistema naquela época. Com a data da configuração, ninguém é cobrado por um passado que o ponto não registrou, e a regra do saldo continua uma só: a data da ficha só fica mais restrita, nunca mais larga.
+
+**O que se troca.** Um campo a mais na administração, e uma data que vale para a empresa toda: quem quer cobrar desde o começo do mês recua a data de todo mundo. A ficha sem a data não tem nenhum dia cobrado, e a folha avisa isso antes de imprimir.
+
+## 20. A jornada de quem já usava nasce da carga
+
+**O que é.** Antes, a empresa digitava só a carga diária. Na atualização, a migration montou a jornada da empresa a partir dessa carga: de segunda a sexta, das 08:00 às 12:00 e, à tarde, das 13:00 até completar a carga (com carga de até 4h, um bloco só, a partir das 08:00). A carga continua exatamente a mesma, e daí em diante ela é calculada pelo banco a partir da jornada (o maior total de um dia), e não digitada.
+
+**Por quê.** O saldo do dia precisa de uma jornada, e uma jornada vazia faria o saldo de todo mundo sumir até alguém cadastrá-la, ou acusar falta em tudo. Montada da carga, a jornada dá o mesmo total de antes em cada dia útil, então o saldo sai certo desde o primeiro dia, sem esperar ninguém. E com a jornada sempre presente, a conta não precisa de um caminho "sem jornada" para manter e testar.
+
+**O que se troca.** Os horários são aproximados até a empresa conferir na tela. Até lá, a marca de atraso pode sair errada (numa empresa que abre às 9h, todo mundo aparece com uma hora de atraso), e o atestado por horário só abona a parte que cai dentro dos blocos montados. O saldo dos dias sem atestado por horário não muda, porque depende do total do dia. Por isso o guia de atualização e o registro de mudanças pedem a conferência logo depois de atualizar.
+
+## 21. Ninguém decide o próprio ponto
+
+**O que é.** O banco recusa, para toda sessão, inclusive a do super admin: lançar ou corrigir a própria batida, decidir o próprio pedido de batida esquecida, lançar ou cancelar ausência para a própria conta, e mudar a jornada própria ou a data "Passou a bater ponto aqui em" da ficha ligada à própria conta (também ao criar a ficha já com elas, ou ao ligar a si uma ficha que já as tem). A tela esconde os botões na própria ficha e diz por quê; a recusa, porém, é do banco ([11](#11-quem-recusa-é-o-banco-não-a-tela)).
+
+**Por quê.** Quem é dono da batida não decide o próprio ponto: essa regra já valia para a batida. Com o saldo, a jornada, a data de início e a ausência passaram a valer horas tanto quanto a batida. Uma jornada própria mais curta vira hora extra; uma data mais nova apaga faltas; e, com o abono, um atestado lançado para si mesmo vira crédito. Deixar essas três abertas seria deixar a porta dos fundos da regra que a batida já tinha.
+
+**O que se troca.** Numa empresa com uma pessoa só administrando, a jornada, a data e o atestado dela precisam de uma segunda pessoa com administração. A jornada da empresa continua livre para quem administra: ela vale para todos, e mudá-la em causa própria muda também a de todo mundo, à vista.
+
+## 22. O CSV cresce no fim
+
+**O que é.** O CSV do período mantém as 18 colunas de antes, na mesma ordem e com o mesmo conteúdo, e o saldo entra em 9 colunas novas no fim (do "Previsto do dia" ao "Estado do dia"). Como as colunas que já fechavam o dia, elas são preenchidas só na última linha de cada dia. O saldo negativo vai com o sinal de menos comum ("-8:00"), e o positivo, sem sinal.
+
+**Por quê.** Muita empresa monta a planilha da contabilidade em cima do arquivo: fórmulas que apontam para a coluna 17, filtros, tabelas dinâmicas. Coluna nova no meio quebraria tudo isso sem aviso. No fim, a planilha de ontem continua lendo o arquivo de hoje. O sinal de menos comum faz a planilha ler o saldo como número e somar a coluna; um "+" no começo da célula seria lido como fórmula, e por isso o positivo vai sem sinal. A neutralização de fórmula continua valendo para todo texto livre.
+
+**O que se troca.** O saldo fica longe das batidas, lá no fim da linha, e o arquivo fica mais largo. E a linha da ausência mudou o texto da coluna Origem (ela passou a trazer o período, como "Atestado 14:00-16:00"): quem filtrava pelo texto antigo precisa refazer o filtro, e o registro de mudanças avisa.

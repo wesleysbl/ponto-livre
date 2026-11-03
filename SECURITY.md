@@ -58,6 +58,15 @@ As regras moram no banco. A tela só mostra e pede: quem recusa é o banco, a ca
 - Corrigir exige um motivo novo, liga a marca de ajuste (que não se desliga) e guarda a linha de antes e a de depois numa trilha. As trilhas não se alteram nem se apagam.
 - Quem é dono da batida não decide o próprio ponto: quem administra, até o super admin, não lança nem corrige a própria batida e não decide o próprio pedido de batida esquecida.
 
+**O próprio ponto, além da batida**
+
+A jornada, a data em que a pessoa passou a bater ponto e as ausências decidem o saldo de horas tanto quanto a batida. Por isso a mesma regra vale para elas, no banco, para toda sessão, inclusive a do super admin:
+
+- **A própria ficha:** ninguém muda a jornada própria nem a data "Passou a bater ponto aqui em" da ficha ligada à própria conta. Também não dá para criar a própria ficha já com as duas, nem ligar a si uma ficha que já as tem (senão bastaria preparar a ficha sem conta e ligá-la depois). A ficha dos outros continua com quem administra, e a jornada da empresa também, porque vale para todos.
+- **A própria ausência:** ninguém lança ausência para a própria conta nem cancela a própria ausência. Com o abono, a ausência em causa própria viraria crédito de horas. Editar uma ausência é cancelar e lançar de novo, então as duas ficam com outra pessoa que administra.
+- A tela esconde os botões na própria ficha e diz por quê, mas quem recusa é o banco: pela API, a recusa vem com a frase da regra. Os testes de banco provam as duas travas para quem administra e para o super admin.
+- Troca: numa empresa com uma pessoa só administrando, a jornada, a data e o atestado dela precisam de uma segunda pessoa com administração.
+
 **O PIN**
 
 - Só existe como hash bcrypt, e não se lê nem se grava direto: só pelas funções do ponto.
@@ -84,12 +93,12 @@ As regras moram no banco. A tela só mostra e pede: quem recusa é o banco, a ca
 - Os cabeçalhos de [`public/_headers`](public/_headers) (e os mesmos em [`vercel.json`](vercel.json) e no [Caddyfile de exemplo](exemplos/servidor/Caddyfile)): câmera e GPS só no próprio app e microfone desligado, nada de iframe, `no-referrer` (o endereço leva id de funcionário), `nosniff`, HTTPS obrigatório e fora dos buscadores.
 - As fontes vêm do próprio app: nenhuma abertura avisa terceiros.
 - O service worker guarda só a casca do app (a página, os arquivos do build com hash no nome e os ícones). Nunca guarda resposta do Supabase nem atestado, e não existe fila offline.
-- O CSV do painel neutraliza fórmula: célula de texto que começa com `=`, `+`, `-` ou `@` sai com um apóstrofo na frente, e a planilha a lê como texto.
+- O CSV do painel neutraliza fórmula: célula de texto que começa com `=`, `+`, `-` ou `@` sai com um apóstrofo na frente, e a planilha a lê como texto. O saldo negativo do dia ("-8:00") é número, e não texto: vai sem apóstrofo, para a planilha somar.
 
 **Segredos**
 
 - No app só vai a chave publicável (a publishable ou, em projeto antigo, a `anon`), que é pública por natureza: quem protege os dados é a RLS. A chave de serviço (a secret ou, em projeto antigo, a `service_role`) só existe dentro da função de contas, no servidor do Supabase, que a entrega à função: ela não fica no repositório nem em variável do build.
-- O repositório não guarda `.env`, e o CI roda sem segredo nenhum.
+- O repositório não guarda `.env`, e o CI roda sem segredo nenhum. Em todo push, o CI procura segredos no histórico inteiro do repositório com o gitleaks, numa versão fixa e com a soma do arquivo conferida, e reprova com qualquer achado. A automação "Prints da documentação" também roda sem segredo: o Supabase dela é local e descartável, e nasce e morre no runner.
 - O CI recusa dependência de produção com falha alta ou crítica conhecida (`npm audit --omit=dev --audit-level=high`).
 
 **As provas**
