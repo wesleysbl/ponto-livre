@@ -15,9 +15,9 @@ import { InicioDaAdministracao } from '../components/InicioDaAdministracao'
 import { ListaDePessoas } from '../components/ListaDePessoas'
 import { Aviso, Botao, Campo, Painel as Cartao, Pagina } from '../components/ui'
 import { lerConfiguracao, lerLocalAtivo, salvarEmpresa, salvarJornada } from '../lib/administracao'
+import { EditorDaSemana } from '../components/EditorDaSemana'
 import {
   camposFaltandoDaEmpresa,
-  escreverDuracao,
   formatarCnpj,
   validarEmpresa,
   validarJornada,
@@ -26,7 +26,11 @@ import {
   type RascunhoDaEmpresa,
   type RascunhoDaJornada,
 } from '../lib/configuracao'
-import { formatarMomento } from '../lib/formato'
+import { escreverData } from '../lib/cadastro'
+import { diaCivilDeHoje, formatarMomento } from '../lib/formato'
+import { ehDiaValido, formatarDuracao } from '../lib/horas'
+import { JORNADA_SEMENTE, cargaDeReferencia } from '../lib/jornada'
+import { lerSemana, rascunhoDaSemana, type RascunhoDaSemana } from '../lib/semana-da-jornada'
 import {
   ID_DA_SECAO,
   type Contagem,
@@ -74,9 +78,10 @@ import {
  * Um botão único no rodapé gravaria as três coisas juntas e faria uma recusa
  * de CNPJ derrubar o ajuste do raio que já estava certo. São três assuntos
  * independentes, com três consequências diferentes: o local muda onde a
- * batida é "dentro", a empresa muda o cabeçalho impresso, e a jornada muda a
- * janela que recusa batida repetida (a carga e a tolerância só ficam
- * guardadas). Salvar em bloco misturaria as três.
+ * batida é "dentro", a empresa muda o cabeçalho impresso, e a jornada muda o
+ * saldo de horas de cada pessoa (a jornada, a tolerância e a data a partir da
+ * qual o saldo é cobrado) e a janela que recusa batida repetida. Salvar em
+ * bloco misturaria as três.
  *
  * O QUE VOLTA DO BANCO REPÕE O QUE ESTÁ NA TELA. É o caso de borda das duas
  * abas: vence a última gravação, e a aba que perdeu a corrida passa a mostrar
@@ -96,11 +101,13 @@ import {
  * latitude e longitude legíveis por inteiro depois de a captura preenchê-los —
  * conferir o número medido é metade do trabalho.
  *
- * OS TRÊS FORMULÁRIOS FICAM LADO A LADO NO COMPUTADOR, e empilhados no celular.
- * São três assuntos independentes, que se salvam sozinhos e nunca se leem juntos
- * — a leitura de cima para baixo não perde nada ao virar da esquerda para a
- * direita. E a alternativa, uma coluna de 448 px num monitor de 1280, obrigava a
- * rolar três telas para chegar às regras de jornada.
+ * NO COMPUTADOR, LOCAL E EMPRESA FICAM LADO A LADO, E A JORNADA OCUPA A LINHA
+ * DE BAIXO INTEIRA; no celular, tudo empilhado, com os sete dias da jornada um
+ * embaixo do outro. São três assuntos independentes, que se salvam sozinhos e
+ * nunca se leem juntos: a leitura de cima para baixo não perde nada ao virar
+ * da esquerda para a direita. E a alternativa, uma coluna de 448 px num
+ * monitor de 1280, obrigava a rolar três telas para chegar às regras de
+ * jornada.
  * ---------------------------------------------------------------------------
  */
 
@@ -320,18 +327,41 @@ function FormularioDaEmpresa({
 }
 
 /* ------------------------------------------------------------------ */
-/* Formulário das regras de jornada                                    */
+/* Formulário da jornada da empresa e das regras                       */
 /* ------------------------------------------------------------------ */
 
 function rascunhoDaJornada(configuracao: ConfiguracaoDoPonto | null): RascunhoDaJornada {
   return {
-    cargaDiaria: escreverDuracao(configuracao?.cargaDiariaMinutos ?? 480),
+    // Sem configuração gravada, a semana começa na semente do banco e a data,
+    // no dia de hoje: é o que o primeiro "salvar" gravaria de qualquer jeito
+    // (os DEFAULT das colunas).
+    semana: rascunhoDaSemana(configuracao?.jornada ?? JORNADA_SEMENTE),
     toleranciaMinutos: String(configuracao?.toleranciaMinutos ?? 10),
     janelaDuplicidadeSegundos: String(configuracao?.janelaDuplicidadeSegundos ?? 60),
+    saldoAPartirDe: configuracao?.saldoAPartirDe ?? diaCivilDeHoje(),
   }
 }
 
-function FormularioDaJornada({
+/**
+ * A carga diária que o banco vai calcular para a semana na tela: o maior total
+ * de dia (`cargaDeReferencia`). `null` enquanto algum horário está incompleto.
+ */
+function cargaDaSemana(semana: RascunhoDaSemana): number | null {
+  const leitura = lerSemana(semana, '')
+  return leitura.ok ? cargaDeReferencia(leitura.valor) : null
+}
+
+/**
+ * A data do saldo foi RECUADA na tela, para antes da gravada? É o caso que
+ * cobra dias que até agora não eram cobrados, inclusive as faltas, e a tela
+ * avisa antes de salvar. Sem data gravada (configuração nova), não há recuo.
+ */
+function saldoRecuado(gravada: string | null, naTela: string): boolean {
+  return gravada !== null && ehDiaValido(naTela) && naTela < gravada
+}
+
+/** Exportado para o teste de tela (`telas-da-jornada.test.ts`); a página é a dona. */
+export function FormularioDaJornada({
   inicial,
   aoSalvar,
 }: {
@@ -339,16 +369,25 @@ function FormularioDaJornada({
   aoSalvar: (configuracao: ConfiguracaoDoPonto) => void
 }) {
   const [rascunho, setRascunho] = useState<RascunhoDaJornada>(() => rascunhoDaJornada(inicial))
+  /** A data que está no banco agora, para o aviso de recuo. Muda a cada gravação. */
+  const [saldoGravado, setSaldoGravado] = useState<string | null>(inicial?.saldoAPartirDe ?? null)
   const [erros, setErros] = useState<string[]>([])
   const [salvo, setSalvo] = useState<string | null>(null)
   const [salvando, setSalvando] = useState(false)
 
-  function mudar(campo: keyof RascunhoDaJornada, valor: string) {
+  function mudar(campo: 'toleranciaMinutos' | 'janelaDuplicidadeSegundos' | 'saldoAPartirDe', valor: string) {
     setRascunho((antes) => ({ ...antes, [campo]: valor }))
     setSalvo(null)
   }
 
+  function mudarSemana(semana: RascunhoDaSemana) {
+    setRascunho((antes) => ({ ...antes, semana }))
+    setSalvo(null)
+  }
+
   async function gravar() {
+    // A tela confere antes de gravar, com as frases do banco: jornada torta,
+    // tolerância, janela e data voltam todas de uma vez, sem viagem.
     const leitura = validarJornada(rascunho)
     if (!leitura.ok) {
       setErros(leitura.erros)
@@ -361,73 +400,115 @@ function FormularioDaJornada({
     try {
       const gravada = await salvarJornada(leitura.valor)
       setRascunho(rascunhoDaJornada(gravada))
+      setSaldoGravado(gravada.saldoAPartirDe)
       aoSalvar(gravada)
       setSalvo(
-        `Regras salvas. A janela de ${gravada.janelaDuplicidadeSegundos} segundos já vale na próxima batida.`,
+        `Jornada e regras salvas. A carga diária ficou em ${formatarDuracao(gravada.cargaDiariaMinutos)}, o saldo é calculado a partir de ${escreverData(gravada.saldoAPartirDe)}, e a janela de ${gravada.janelaDuplicidadeSegundos} segundos já vale na próxima batida.`,
       )
     } catch (falha) {
-      setErros([fraseDe(falha, 'Não deu para salvar as regras de jornada.')])
+      setErros([fraseDe(falha, 'Não deu para salvar a jornada e as regras.')])
       setSalvo(null)
     } finally {
       setSalvando(false)
     }
   }
 
+  const carga = cargaDaSemana(rascunho.semana)
+
   return (
     <Cartao>
       <Secao
         icone={<Clock size={16} aria-hidden="true" />}
         titulo="Regras de jornada"
-        descricao="A janela de duplicidade é lida pelo servidor a cada batida — muda aqui, vale na próxima."
+        descricao="A jornada da empresa vale para quem não tem jornada própria na ficha, e é dela que sai o saldo de horas de cada dia. Dia sem horário é dia sem jornada. A janela de duplicidade é lida pelo servidor a cada batida: muda aqui, vale na próxima."
       />
 
-      <div className="space-y-3">
-        <Campo
-          id="jornada-carga"
-          rotulo="Carga diária esperada (horas:minutos)"
-          value={rascunho.cargaDiaria}
-          onChange={(evento) => mudar('cargaDiaria', evento.target.value)}
-          placeholder="08:00"
-        />
-        <Campo
-          id="jornada-tolerancia"
-          rotulo="Tolerância, em minutos"
-          inputMode="numeric"
-          value={rascunho.toleranciaMinutos}
-          onChange={(evento) => mudar('toleranciaMinutos', evento.target.value)}
-          placeholder="10"
-        />
-        {/*
-          A CARGA E A TOLERÂNCIA SÃO SÓ GUARDADAS. Nenhuma conta do app as lê:
-          `horas.ts` soma os pares de batidas, e a folha, o espelho, o painel e
-          o CSV saem dessa soma. A tela diz isso para não prometer saldo,
-          atraso ou hora extra que ninguém calcula.
-        */}
-        <p className="text-[0.68rem] leading-relaxed text-faint">
-          A carga diária e a tolerância ficam guardadas, mas ainda não entram em conta nenhuma: o
-          app não calcula saldo de horas, minutos de atraso nem hora extra. A folha soma só as
-          horas trabalhadas.
-        </p>
-        <Campo
-          id="jornada-janela"
-          rotulo="Janela que recusa batida repetida, em segundos"
-          inputMode="numeric"
-          value={rascunho.janelaDuplicidadeSegundos}
-          onChange={(evento) => mudar('janelaDuplicidadeSegundos', evento.target.value)}
-          placeholder="60"
-        />
-        <p className="text-[0.68rem] leading-relaxed text-faint">
-          A janela existe para o dedo tremido e para o reenvio do app numa rede ruim. Ela não pode
-          ser desligada: o banco recusa menos de 10 segundos, e acima de 900 ela passaria a barrar
-          batida legítima de quem saiu e voltou.
-        </p>
+      <div className="space-y-4">
+        <div>
+          <p className="mb-2 text-sm font-medium text-plat-dim">Jornada da empresa</p>
+          <EditorDaSemana
+            idBase="jornada-empresa"
+            semana={rascunho.semana}
+            aoMudar={mudarSemana}
+            desabilitado={salvando}
+          />
+          <p className="mt-1 text-[0.68rem] leading-relaxed text-faint">
+            Carga diária:{' '}
+            <span className="font-mono tabular-nums text-plat-dim">
+              {carga === null ? 'confira os horários' : formatarDuracao(carga)}
+            </span>
+            . Não se digita: é o maior total de dia, e o banco a calcula ao salvar. Até dois blocos
+            por dia, de 1h a 12h no total.
+          </p>
+        </div>
+
+        {/* Os três campos lado a lado quando o cartão tem largura; empilhados
+            no celular. A data tem a explicação embaixo, na largura toda. */}
+        <div className="@container">
+          <div className="grid grid-cols-1 gap-3 @min-[30rem]:grid-cols-2 @min-[48rem]:grid-cols-3">
+            <Campo
+              id="jornada-tolerancia"
+              rotulo="Tolerância, em minutos"
+              inputMode="numeric"
+              value={rascunho.toleranciaMinutos}
+              onChange={(evento) => mudar('toleranciaMinutos', evento.target.value)}
+              placeholder="10"
+            />
+            <Campo
+              id="jornada-janela"
+              rotulo="Janela que recusa batida repetida, em segundos"
+              inputMode="numeric"
+              value={rascunho.janelaDuplicidadeSegundos}
+              onChange={(evento) => mudar('janelaDuplicidadeSegundos', evento.target.value)}
+              placeholder="60"
+            />
+            <Campo
+              id="jornada-saldo-a-partir-de"
+              rotulo="Saldo calculado a partir de"
+              type="date"
+              value={rascunho.saldoAPartirDe}
+              onChange={(evento) => mudar('saldoAPartirDe', evento.target.value)}
+              aria-describedby="jornada-saldo-explicacao"
+            />
+          </div>
+        </div>
+        <div className="space-y-2 text-[0.68rem] leading-relaxed text-faint">
+          <p>
+            A tolerância vale por dia: quando as horas do dia ficam até esse tanto acima ou abaixo
+            da jornada, o saldo do dia é zero.
+          </p>
+          <p id="jornada-saldo-explicacao">
+            O saldo de horas e as faltas de cada pessoa só contam a partir da mais nova entre esta
+            data e a data “Passou a bater ponto aqui em” da ficha. Antes dela, nenhum dia é cobrado.
+            Recuar a data faz os dias desde lá serem cobrados, inclusive as faltas.
+          </p>
+          <p>
+            A janela existe para o dedo tremido e para o reenvio do app numa rede ruim. Ela não pode
+            ser desligada: o banco recusa menos de 10 segundos, e acima de 900 ela passaria a barrar
+            batida legítima de quem saiu e voltou.
+          </p>
+        </div>
+
+        {saldoRecuado(saldoGravado, rascunho.saldoAPartirDe) && (
+          <Aviso tom="atencao">
+            <span className="inline-flex items-start gap-1.5">
+              <AlertTriangle size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
+              <span>
+                A data recua de {escreverData(saldoGravado)} para{' '}
+                {escreverData(rascunho.saldoAPartirDe)}. Ao salvar, os dias desde{' '}
+                {escreverData(rascunho.saldoAPartirDe)} passam a ser cobrados de quem já batia ponto
+                aqui, inclusive as faltas.
+              </span>
+            </span>
+          </Aviso>
+        )}
 
         <Recusas erros={erros} />
         <Confirmacao texto={salvo} />
 
         <Botao onClick={() => void gravar()} disabled={salvando}>
           <Save size={16} aria-hidden="true" />
-          {salvando ? 'Salvando…' : 'Salvar as regras'}
+          {salvando ? 'Salvando…' : 'Salvar a jornada e as regras'}
         </Botao>
       </div>
     </Cartao>
@@ -468,6 +549,15 @@ export function Administracao() {
    * que fazer nela.
    */
   const faltando = dados.configuracao ? camposFaltandoDaEmpresa(dados.configuracao) : []
+
+  /*
+   * A jornada da empresa que a ficha mostra como referência. Sem a linha de
+   * configuração (instalação nova), vale a semente do banco, que é o DEFAULT
+   * da coluna; enquanto a leitura não chega, ou se ela falhou, a ficha diz que
+   * não deu para mostrar e grava do mesmo jeito.
+   */
+  const jornadaDaEmpresa =
+    dados.configuracao?.jornada ?? (!carregando && !dados.erro ? JORNADA_SEMENTE : null)
 
   function trocarConfiguracao(configuracao: ConfiguracaoDoPonto) {
     setDados((antes) => ({ ...antes, configuracao }))
@@ -559,7 +649,10 @@ export function Administracao() {
         {/* `scroll-mt-4`: o cartão da página inicial rola até aqui sem colar o
             título na borda da tela. */}
         <div id={ID_DA_SECAO.pessoas} className="scroll-mt-4">
-          <ListaDePessoas aoResumir={setResumoDePessoas} />
+          <ListaDePessoas
+            aoResumir={setResumoDePessoas}
+            jornadaDaEmpresa={jornadaDaEmpresa}
+          />
         </div>
 
         {/*
@@ -594,26 +687,30 @@ export function Administracao() {
         {!dados.erro && !carregando && (
           <>
             {/*
-              OS TRÊS FORMULÁRIOS, LADO A LADO A PARTIR DE 1024 px.
+              OS TRÊS FORMULÁRIOS A PARTIR DE 1024 px: local e empresa lado a
+              lado, e a jornada na linha de baixo, inteira. São sete dias com
+              até dois blocos cada; num terço da página eles virariam uma coluna
+              de mil pixels. Com a largura toda, os dias se arrumam em quatro
+              colunas (`EditorDaSemana`).
 
-              `lg:items-start` é o que impede o cartão mais curto (jornada) de
+              `lg:items-start` é o que impede o cartão mais curto (empresa) de
               esticar até a altura do mais alto (local, que tem o botão de
-              captura e a explicação). Três cartões de alturas diferentes lidos
-              lado a lado são três assuntos; três cartões esticados até a mesma
-              altura parecem um formulário só, com um botão "Salvar" em cada
-              rodapé — que é exatamente a leitura errada.
+              captura e a explicação). Dois cartões de alturas diferentes lidos
+              lado a lado são dois assuntos; esticados até a mesma altura,
+              parecem um formulário só, com um botão "Salvar" em cada rodapé,
+              que é exatamente a leitura errada.
 
               Em coluna única, o `grid gap-4` empilha os cartões com o mesmo
               espaço de um `space-y-4`: no celular, é uma pilha comum.
             */}
-            <div className="grid gap-4 lg:grid-cols-3 lg:items-start">
+            <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
               <div id={ID_DA_SECAO.local} className="scroll-mt-4">
                 <FormularioDoLocal inicial={dados.local} aoSalvar={trocarLocal} />
               </div>
               <div id={ID_DA_SECAO.empresa} className="scroll-mt-4">
                 <FormularioDaEmpresa inicial={dados.configuracao} aoSalvar={trocarConfiguracao} />
               </div>
-              <div id={ID_DA_SECAO.jornada} className="scroll-mt-4">
+              <div id={ID_DA_SECAO.jornada} className="scroll-mt-4 lg:col-span-2">
                 <FormularioDaJornada inicial={dados.configuracao} aoSalvar={trocarConfiguracao} />
               </div>
             </div>

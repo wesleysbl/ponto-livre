@@ -57,11 +57,14 @@ import {
   camposFaltandoDaFicha,
   descreverVinculo,
   escreverData,
+  fichaDaSessao,
   formatarCpf,
   validarFicha,
   type FichaDoFuncionario,
   type RascunhoDaFicha,
 } from '../lib/cadastro'
+import type { Jornada } from '../lib/jornada'
+import { semanaVazia } from '../lib/semana-da-jornada'
 import {
   ErroDeConta,
   falhaPedeReleitura,
@@ -960,6 +963,9 @@ function fichaSoComNome(nomeCompleto: string, usuarioId: string): RascunhoDaFich
     centroCusto: '',
     usuarioId,
     batePontoDesde: '',
+    // A ficha nova nasce seguindo a jornada da empresa (grava nulo).
+    origemDaJornada: 'empresa',
+    jornadaPropria: semanaVazia(),
   }
 }
 
@@ -977,8 +983,11 @@ function rotuloDaConta(pessoa: PessoaDaAdministracao | undefined): string | null
  */
 export function ListaDePessoas({
   aoResumir,
+  jornadaDaEmpresa = null,
 }: {
   aoResumir?: (leitura: Contagem<ResumoDePessoas>) => void
+  /** A referência da ficha ("usar a da empresa"); vem da configuração da página. */
+  jornadaDaEmpresa?: Jornada | null
 } = {}) {
   const [parametros, setParametros] = useSearchParams()
   const { acesso, usuario } = useAuth()
@@ -1305,8 +1314,11 @@ export function ListaDePessoas({
       setErros(leitura.erros)
       return
     }
+    // A ficha da própria sessão grava sem a jornada e sem a data: o banco
+    // recusa que o dono as mude, e a caixa as mostrou só para ler.
+    const propria = fichaDaSessao(alvo.usuarioId, usuario?.id ?? null)
     void executar(async () => {
-      const gravada = await salvarFicha(alvo.ficha?.id ?? null, leitura.valor)
+      const gravada = await salvarFicha(alvo.ficha?.id ?? null, leitura.valor, { propria })
       return {
         texto: alvo.ficha
           ? `Ficha de ${gravada.nomeCompleto} salva.`
@@ -1420,8 +1432,8 @@ export function ListaDePessoas({
                   <AlertTriangle size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
                   <span>
                     {resumo.naoBatemAqui} ficha(s) ativa(s) ainda sem “passou a bater ponto aqui em”.
-                    A data é só registro: aparece nesta lista e não muda a batida nem a folha.
-                    Preencha quando cada pessoa começar de verdade.
+                    Sem a data, nenhum dia dessas pessoas entra no saldo de horas nem vira falta.
+                    Preencha com o dia em que cada uma passou a bater ponto aqui.
                   </span>
                 </span>
               </Aviso>
@@ -1569,6 +1581,8 @@ export function ListaDePessoas({
           usuarioId={pedido.usuarioId}
           nomeInicial={pedido.nomeInicial}
           rotuloDaConta={pedido.rotuloDaConta}
+          jornadaDaEmpresa={jornadaDaEmpresa}
+          propria={fichaDaSessao(pedido.usuarioId, usuario?.id ?? null)}
           gravando={gravando}
           erro={erros.length > 0 ? erros.join(' ') : null}
           aoSalvar={(rascunho) => gravarFicha(pedido, rascunho)}

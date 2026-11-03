@@ -79,7 +79,10 @@ export function Botao({
 const CAMPO =
   'w-full min-h-11 rounded-xl border border-plat/40 bg-ink-2 px-4 py-3 text-sm text-plat ' +
   'placeholder:text-faint transition-colors ' +
-  'focus:border-luz/70 focus:outline-none focus:ring-2 focus:ring-luz/25'
+  'focus:border-luz/70 focus:outline-none focus:ring-2 focus:ring-luz/25 ' +
+  // O campo bloqueado continua legível (o valor é o que se confere), mas
+  // apagado e sem cursor de digitar: dá para ver que não se edita.
+  'disabled:cursor-not-allowed disabled:opacity-60'
 
 export function Campo({
   rotulo,
@@ -129,7 +132,7 @@ export function Escolha({
         value={value}
         disabled={disabled}
         onChange={(evento) => onChange(evento.target.value)}
-        className={`${CAMPO} disabled:opacity-60`}
+        className={CAMPO}
       >
         {children}
       </select>

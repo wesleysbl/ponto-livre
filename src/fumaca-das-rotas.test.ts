@@ -1182,33 +1182,128 @@ describe('a página inicial da administração', () => {
 })
 
 /* ------------------------------------------------------------------ */
-/* A administração não promete conta que o app não faz                 */
+/* A administração diz o que a jornada e a data fazem no saldo         */
 /* ------------------------------------------------------------------ */
 
-describe('a administração não promete conta que o app não faz', () => {
+describe('a administração diz o que a jornada e a data fazem no saldo', () => {
   /*
-   * Nenhuma conta do app lê a carga diária, a tolerância nem a data "passou a
-   * bater ponto aqui em": `horas.ts` soma os pares de batidas, e a folha não
-   * acusa falta em dia sem batida. A tela diz isso, e não o contrário.
+   * A jornada da empresa, a tolerância, a "Saldo calculado a partir de" e a
+   * data "Passou a bater ponto aqui em" da ficha decidem o saldo de horas
+   * (`saldo.ts`). A tela diz o que cada uma faz, e não que ficam só guardadas.
    */
-  it('as regras de jornada dizem o que vale na batida e que a carga e a tolerância só ficam guardadas', async () => {
+  it('as regras de jornada: o editor da semana no lugar da carga digitada, e a data do saldo com a explicação', async () => {
     entrarComo('admin', bancoComDados())
     const tela = await abrir('/administracao')
-    const regras = (document.getElementById('secao-jornada')?.textContent ?? '').replace(/\s+/g, ' ')
-    expect(regras).toContain('A janela de duplicidade é lida pelo servidor a cada batida — muda aqui, vale na próxima.')
-    expect(regras).toContain(
-      'A carga diária e a tolerância ficam guardadas, mas ainda não entram em conta nenhuma: o app não calcula saldo de horas, minutos de atraso nem hora extra.',
+    const secao = document.getElementById('secao-jornada')
+    const regras = (secao?.textContent ?? '').replace(/\s+/g, ' ')
+    expect(regras).toContain('A janela de duplicidade é lida pelo servidor a cada batida: muda aqui, vale na próxima.')
+    // A carga digitada sumiu; o editor dos sete dias está no lugar, montado do banco.
+    expect(secao?.querySelector('#jornada-carga')).toBeNull()
+    expect(regras).not.toContain('Carga diária esperada')
+    expect(secao?.querySelector<HTMLInputElement>('#jornada-empresa-1-0-inicio')?.value).toBe('08:00')
+    expect(secao?.querySelector<HTMLInputElement>('#jornada-empresa-5-1-fim')?.value).toBe('17:00')
+    expect(regras).toContain('Total da semana: 40h00')
+    expect(regras).toContain('Carga diária: 8h00. Não se digita')
+    // A data do saldo, com o que ela faz.
+    const data = secao?.querySelector<HTMLInputElement>('#jornada-saldo-a-partir-de')
+    expect(data?.value).toBe(`${mes}-01`)
+    expect(data?.getAttribute('aria-describedby')).toBe('jornada-saldo-explicacao')
+    expect(document.getElementById('jornada-saldo-explicacao')?.textContent?.replace(/\s+/g, ' ')).toBe(
+      'O saldo de horas e as faltas de cada pessoa só contam a partir da mais nova entre esta data e a data “Passou a bater ponto aqui em” da ficha. Antes dela, nenhum dia é cobrado. Recuar a data faz os dias desde lá serem cobrados, inclusive as faltas.',
     )
+    expect(regras).not.toMatch(/ficam guardadas|não entram em conta nenhuma|não calcula saldo/)
     conferirFumaca(tela)
   })
 
-  it('o aviso das fichas sem a data diz que ela é só registro, que não muda a batida nem a folha', async () => {
+  it('o aviso das fichas sem a data diz que sem ela nenhum dia entra no saldo', async () => {
     // A ficha do Bruno está ativa, sem conta e sem a data.
     entrarComo('admin', bancoComDados())
     const tela = await abrir('/administracao')
     expect(tela.texto()).toContain(
-      '1 ficha(s) ativa(s) ainda sem “passou a bater ponto aqui em”. A data é só registro: aparece nesta lista e não muda a batida nem a folha.',
+      '1 ficha(s) ativa(s) ainda sem “passou a bater ponto aqui em”. Sem a data, nenhum dia dessas pessoas entra no saldo de horas nem vira falta.',
     )
+    expect(tela.texto()).not.toMatch(/só registro/)
+    conferirFumaca(tela)
+  })
+
+  /** O banco com dados, e o Sérgio (a sessão do admin) com ficha própria: jornada própria e a data. */
+  function bancoComFichaDoAdmin(): Record<string, Linha[]> {
+    const banco = bancoComDados()
+    return {
+      ...banco,
+      ponto_funcionarios: [
+        ...banco.ponto_funcionarios,
+        {
+          ...banco.ponto_funcionarios[0],
+          id: 'f3',
+          usuario_id: ADMIN.id,
+          nome_completo: 'Sérgio Almeida',
+          matricula: '1',
+          cargo: 'Diretor',
+          bate_ponto_desde: '2026-09-01',
+          jornada: [{ dia: 1, inicio: '10:00', fim: '16:00' }],
+        },
+      ],
+    }
+  }
+
+  /** Abre a linha da pessoa (pelo e-mail) e a caixa "Editar a ficha" dela. */
+  async function editarAFichaDe(raiz: HTMLElement, email: string) {
+    const linha = [...raiz.querySelectorAll('#secao-pessoas li')].find((item) => (item.textContent ?? '').includes(email))
+    expect(linha, `a linha de ${email}`).toBeDefined()
+    await act(async () => {
+      linha?.querySelector('button')?.click()
+    })
+    await assentar()
+    const editar = [...(linha?.querySelectorAll('button') ?? [])].find((botao) => (botao.textContent ?? '').includes('Editar a ficha'))
+    expect(editar, `"Editar a ficha" de ${email}`).toBeDefined()
+    await act(async () => {
+      editar?.click()
+    })
+    await assentar()
+    const caixa = raiz.querySelector<HTMLElement>('[role="dialog"]')
+    expect(caixa).not.toBeNull()
+    return caixa as HTMLElement
+  }
+
+  it('a própria ficha abre com a jornada e a data bloqueadas, com a frase; a de outra pessoa, não', async () => {
+    entrarComo('admin', bancoComFichaDoAdmin())
+    const tela = await abrir('/administracao')
+
+    const propria = await editarAFichaDe(tela.raiz, ADMIN.email)
+    const textoDaPropria = (propria.textContent ?? '').replace(/\s+/g, ' ')
+    expect(textoDaPropria).toContain(
+      'Esta ficha é a sua. Quem é dono da ficha não muda a própria jornada nem a data em que passou a bater ponto aqui, porque as duas decidem o saldo de horas: outra pessoa que administra o ponto faz isso.',
+    )
+    const dataDaPropria = propria.querySelector<HTMLInputElement>('#ficha-bate-ponto-desde')
+    expect(dataDaPropria?.value).toBe('2026-09-01')
+    expect(dataDaPropria?.disabled).toBe(true)
+    expect(dataDaPropria?.getAttribute('aria-describedby')).toBe('ficha-propria-explicacao')
+    const origem = propria.querySelector<HTMLSelectElement>('#ficha-jornada-origem')
+    expect(origem?.value).toBe('propria')
+    expect(origem?.disabled).toBe(true)
+    // A jornada própria aparece para ler, sem editor.
+    expect(textoDaPropria).toContain('A jornada própria desta pessoa:')
+    expect(textoDaPropria).toContain('10:00-16:00')
+    expect(propria.querySelector('input[type="time"]')).toBeNull()
+    // O resto da ficha continua editável.
+    expect(propria.querySelector<HTMLInputElement>('#ficha-cargo')?.disabled).toBe(false)
+
+    const fechar = [...propria.querySelectorAll('button')].find((botao) => (botao.textContent ?? '').trim() === 'Cancelar')
+    await act(async () => {
+      fechar?.click()
+    })
+    await assentar()
+
+    const daAna = await editarAFichaDe(tela.raiz, ANA.email)
+    const textoDaAna = (daAna.textContent ?? '').replace(/\s+/g, ' ')
+    expect(textoDaAna).not.toContain('Esta ficha é a sua')
+    expect(daAna.querySelector<HTMLInputElement>('#ficha-bate-ponto-desde')?.disabled).toBe(false)
+    expect(daAna.querySelector<HTMLSelectElement>('#ficha-jornada-origem')?.disabled).toBe(false)
+    // Segue a da empresa, e a referência é a jornada da configuração.
+    expect(daAna.querySelector<HTMLSelectElement>('#ficha-jornada-origem')?.value).toBe('empresa')
+    expect(textoDaAna).toContain('A jornada da empresa, hoje:')
+    expect(textoDaAna).toContain('08:00-12:00 e 13:00-17:00')
     conferirFumaca(tela)
   })
 })

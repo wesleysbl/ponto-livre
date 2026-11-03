@@ -42,6 +42,12 @@
 import { type Leitura } from './configuracao'
 import { ehDiaValido } from './horas'
 import type { Jornada } from './jornada'
+import {
+  lerSemana,
+  rascunhoDaSemana,
+  semanaEstaVazia,
+  type RascunhoDaSemana,
+} from './semana-da-jornada'
 
 /* ------------------------------------------------------------------ */
 /* Tipos                                                               */
@@ -99,18 +105,17 @@ export interface FichaDoFuncionario {
 }
 
 /**
- * O que se grava numa ficha.
+ * O que se grava numa ficha, inclusive a jornada própria (nula = a da empresa).
  *
  * `ativo` NÃO ESTÁ AQUI de propósito: desativar é uma ação com confirmação
  * própria, e não um campo que se desmarca sem querer no meio de uma edição de
  * cargo. Quem a muda é `definirAtivoDaFicha`, em `administracao.ts`.
  *
- * `jornada` TAMBÉM NÃO ESTÁ AQUI: o formulário da ficha não a edita, e ela só
- * vai ao banco por quem a edita. Mandá-la junto com o cargo gravaria de novo
- * o que a tela leu, e uma gravação com a leitura velha apagaria a jornada que
- * outra aba acabou de mudar.
+ * NA FICHA DA PRÓPRIA SESSÃO, a jornada e `batePontoDesde` vão daqui, mas não
+ * chegam ao banco: `salvarFicha` com `propria` as deixa de fora, porque o banco
+ * recusa que o dono da ficha mude as duas (ver `fichaDaSessao`).
  */
-export type DadosDaFicha = Omit<FichaDoFuncionario, 'id' | 'ativo' | 'atualizadoEm' | 'jornada'>
+export type DadosDaFicha = Omit<FichaDoFuncionario, 'id' | 'ativo' | 'atualizadoEm'>
 
 /** O que o formulário da ficha entrega: tudo texto, como sai de um `<input>`. */
 export interface RascunhoDaFicha {
@@ -126,6 +131,58 @@ export interface RascunhoDaFicha {
   /** `''` = sem conta para bater ponto: a ficha pode nascer antes da conta. */
   usuarioId: string
   batePontoDesde: string
+  /** "Usar a da empresa" (grava NULO) ou "jornada própria" (grava a semana). */
+  origemDaJornada: OrigemDaJornada
+  /**
+   * Os blocos da jornada própria. Fica guardado mesmo com "usar a da empresa"
+   * escolhido, para a troca de ida e volta não apagar o que foi digitado; só
+   * é lido (e gravado) com "jornada própria".
+   */
+  jornadaPropria: RascunhoDaSemana
+}
+
+export type OrigemDaJornada = 'empresa' | 'propria'
+
+/** A frase da jornada própria sem nenhum dia. */
+export const JORNADA_PROPRIA_VAZIA =
+  'A jornada própria está sem nenhum dia. Preencha os horários, ou escolha usar a da empresa.'
+
+/**
+ * Troca entre "usar a da empresa" e "jornada própria".
+ *
+ * AO ESCOLHER A PRÓPRIA COM A SEMANA VAZIA, ELA COMEÇA IGUAL À DA EMPRESA: a
+ * jornada própria quase sempre é a da empresa com um dia diferente, e partir
+ * dela é trocar dois campos em vez de digitar a semana inteira. Sem a da
+ * empresa (a configuração não carregou), começa vazia.
+ */
+export function trocarOrigemDaJornada(
+  rascunho: RascunhoDaFicha,
+  origem: OrigemDaJornada,
+  jornadaDaEmpresa: Jornada | null,
+): RascunhoDaFicha {
+  const preencher = origem === 'propria' && semanaEstaVazia(rascunho.jornadaPropria)
+  return {
+    ...rascunho,
+    origemDaJornada: origem,
+    jornadaPropria: preencher ? rascunhoDaSemana(jornadaDaEmpresa) : rascunho.jornadaPropria,
+  }
+}
+
+/**
+ * A ficha é da conta desta sessão? `usuarioDaFicha` é a conta ligada à ficha
+ * (ou a conta para a qual a ficha nova está sendo criada).
+ *
+ * ⚠ QUEM É DONO DA FICHA NÃO MUDA A PRÓPRIA JORNADA NEM A DATA EM QUE PASSOU A
+ * BATER PONTO. As duas decidem o saldo de horas, e é a mesma regra da batida:
+ * quem é dono dela não decide o próprio ponto. Vale para todo mundo, inclusive
+ * o super admin, e quem recusa é o banco
+ * (`ponto_funcionarios_guardar_propria_ficha`); a tela usa esta resposta só
+ * para mostrar as duas bloqueadas, com o porquê, e para não mandá-las.
+ *
+ * Sem sessão ou ficha sem conta, não é a própria.
+ */
+export function fichaDaSessao(usuarioDaFicha: string | null, usuarioDaSessao: string | null): boolean {
+  return usuarioDaFicha !== null && usuarioDaSessao !== null && usuarioDaFicha === usuarioDaSessao
 }
 
 /* ------------------------------------------------------------------ */
@@ -275,6 +332,15 @@ export function validarFicha(rascunho: RascunhoDaFicha): Leitura<DadosDaFicha> {
     erros.push('A data em que a pessoa passou a bater ponto aqui não é uma data válida.')
   }
 
+  // "Usar a da empresa" grava NULO e não confere os blocos guardados no
+  // rascunho: eles não vão para o banco.
+  let jornada: Jornada | null = null
+  if (rascunho.origemDaJornada === 'propria') {
+    const leitura = lerSemana(rascunho.jornadaPropria, JORNADA_PROPRIA_VAZIA)
+    if (leitura.ok) jornada = leitura.valor
+    else erros.push(...leitura.erros)
+  }
+
   const usuarioDigitado = rascunho.usuarioId.trim()
   let usuarioId: string | null = null
   if (usuarioDigitado !== '') {
@@ -300,6 +366,7 @@ export function validarFicha(rascunho: RascunhoDaFicha): Leitura<DadosDaFicha> {
       ctpsSerie: ouNulo(rascunho.ctpsSerie),
       centroCusto: ouNulo(rascunho.centroCusto),
       batePontoDesde: batePontoDesde ?? null,
+      jornada,
     },
   }
 }
@@ -347,9 +414,10 @@ export function camposFaltandoDaFicha(ficha: FichaDoFuncionario): string[] {
  *   `bate`        — tem conta e a data está preenchida.
  *
  * A frase de `nao-bate` não diz "ainda não bate ponto aqui": a ficha ativa
- * ligada LIBERA o ponto, com ou sem a data. O que falta, nesse estado, é só o
- * registro da data — e é isso que a frase diz, ao lado de "bate ponto pela
- * ficha" na lista. A data não muda a folha nem o acesso (ver `batePontoDesde`).
+ * ligada LIBERA o ponto, com ou sem a data. O que falta, nesse estado, é a
+ * data, e é isso que a frase diz, ao lado de "bate ponto pela ficha" na lista.
+ * A data não muda o acesso; ela decide desde quando o saldo da pessoa é
+ * cobrado (ver `batePontoDesde`).
  */
 export type VinculoDaFicha =
   | { estado: 'sem-conta'; texto: string }

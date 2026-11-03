@@ -1,12 +1,17 @@
 import { useState } from 'react'
-import { Link2, Save, X } from 'lucide-react'
-import { Aviso, Botao, Campo, Modal } from './ui'
+import { Clock, Link2, Lock, Save, X } from 'lucide-react'
+import { Aviso, Botao, Campo, Escolha, Modal } from './ui'
+import { EditorDaSemana, ResumoDaJornada } from './EditorDaSemana'
 import {
   formatarCpf,
+  trocarOrigemDaJornada,
   validarFicha,
   type FichaDoFuncionario,
+  type OrigemDaJornada,
   type RascunhoDaFicha,
 } from '../lib/cadastro'
+import type { Jornada } from '../lib/jornada'
+import { rascunhoDaSemana } from '../lib/semana-da-jornada'
 
 /*
  * A FICHA DO FUNCIONÁRIO — o formulário de criar e editar, e a caixa de
@@ -26,11 +31,23 @@ import {
  * — o gatilho do banco deixa o admin comum editar o cadastro de uma ficha que
  * já libera a MESMA conta.
  *
+ * ⚠ NA PRÓPRIA FICHA, A JORNADA E A DATA "PASSOU A BATER PONTO AQUI EM" SÃO SÓ
+ * PARA LER. As duas decidem o saldo de horas, e quem é dono da ficha não decide
+ * o próprio ponto: o banco recusa a mudança para todo mundo, inclusive o super
+ * admin (`ponto_funcionarios_guardar_propria_ficha`). A caixa mostra as duas
+ * bloqueadas, com a frase do porquê, e a gravação dessa ficha não as manda
+ * (`salvarFicha` com `propria`). Quem diz se a ficha é a da sessão é a lista
+ * de pessoas, por `fichaDaSessao`.
+ *
  * A GUARDA DE ROTA NÃO PROTEGE NADA DISTO. Quem recusa é o Postgres: a policy
- * de escrita de `ponto_funcionarios` exige `ponto_pode_administrar()`, e o
+ * de escrita de `ponto_funcionarios` exige `ponto_pode_administrar()`, o
  * gatilho `ponto_funcionarios_acesso_pelo_super_admin` exige super admin
- * para liberar acesso.
+ * para liberar acesso, e o da própria ficha recusa o dono.
  */
+
+/** A frase do porquê, na ficha da própria sessão. */
+export const POR_QUE_A_PROPRIA_FICHA_E_SO_PARA_LER =
+  'Esta ficha é a sua. Quem é dono da ficha não muda a própria jornada nem a data em que passou a bater ponto aqui, porque as duas decidem o saldo de horas: outra pessoa que administra o ponto faz isso. Os outros campos se editam como em qualquer ficha.'
 
 /* ------------------------------------------------------------------ */
 /* O formulário da ficha                                               */
@@ -52,6 +69,8 @@ function rascunhoDaFicha(ficha: FichaDoFuncionario | null, usuarioId: string | n
     centroCusto: ficha?.centroCusto ?? '',
     usuarioId: ficha?.usuarioId ?? usuarioId ?? '',
     batePontoDesde: ficha?.batePontoDesde ?? '',
+    origemDaJornada: ficha?.jornada ? 'propria' : 'empresa',
+    jornadaPropria: rascunhoDaSemana(ficha?.jornada ?? null),
   }
 }
 
@@ -64,12 +83,21 @@ function rascunhoDaFicha(ficha: FichaDoFuncionario | null, usuarioId: string | n
  *
  * `nomeInicial` preenche o nome completo da ficha nova com o nome da pessoa —
  * é o ponto de partida, e quase nunca o nome inteiro da carteira de trabalho.
+ *
+ * `jornadaDaEmpresa` é a referência mostrada com "usar a da empresa", e o ponto
+ * de partida da jornada própria. Nula quando a configuração não carregou: a
+ * ficha grava do mesmo jeito.
+ *
+ * `propria`: a ficha é (ou vai ser) da conta desta sessão. A jornada e a data
+ * "Passou a bater ponto aqui em" ficam só para ler, com a frase do porquê.
  */
 export function FormularioDaFicha({
   ficha,
   usuarioId = null,
   nomeInicial = '',
   rotuloDaConta,
+  jornadaDaEmpresa = null,
+  propria = false,
   gravando,
   erro,
   aoSalvar,
@@ -80,6 +108,8 @@ export function FormularioDaFicha({
   nomeInicial?: string
   /** Como a conta ligada aparece na caixa ("Maria — maria@…"); nulo = sem conta. */
   rotuloDaConta: string | null
+  jornadaDaEmpresa?: Jornada | null
+  propria?: boolean
   gravando: boolean
   erro: string | null
   aoSalvar: (rascunho: RascunhoDaFicha) => void
@@ -91,9 +121,20 @@ export function FormularioDaFicha({
   }))
   const [erros, setErros] = useState<string[]>([])
 
-  function mudar(campo: keyof RascunhoDaFicha, valor: string) {
+  function mudar(
+    campo: Exclude<keyof RascunhoDaFicha, 'origemDaJornada' | 'jornadaPropria'>,
+    valor: string,
+  ) {
     setRascunho((antes) => ({ ...antes, [campo]: valor }))
   }
+
+  function escolherOrigem(valor: string) {
+    const origem: OrigemDaJornada = valor === 'propria' ? 'propria' : 'empresa'
+    setRascunho((antes) => trocarOrigemDaJornada(antes, origem, jornadaDaEmpresa))
+  }
+
+  /** O que a ficha da própria sessão mostra: a jornada gravada, como está. */
+  const jornadaGravada = ficha?.jornada ?? null
 
   function enviar() {
     const leitura = validarFicha(rascunho)
@@ -122,7 +163,8 @@ export function FormularioDaFicha({
               {ficha ? ficha.nomeCompleto : 'Funcionário do ponto'}
             </h2>
             <p className="mt-0.5 text-[0.7rem] leading-relaxed text-mute">
-              O nome completo é o que sai na folha que a pessoa assina; os outros campos ficam
+              O nome completo é o que sai na folha que a pessoa assina, e a data em que passou a
+              bater ponto aqui e a jornada decidem o saldo de horas; os outros campos ficam
               guardados no cadastro. Deixar um campo vazio é melhor do que inventar.
             </p>
           </div>
@@ -239,24 +281,94 @@ export function FormularioDaFicha({
             </p>
           </div>
 
+          {propria && (
+            <div id="ficha-propria-explicacao">
+              <Aviso tom="neutro">
+                <span className="inline-flex items-start gap-1.5">
+                  <Lock size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
+                  <span>{POR_QUE_A_PROPRIA_FICHA_E_SO_PARA_LER}</span>
+                </span>
+              </Aviso>
+            </div>
+          )}
+
           <Campo
             id="ficha-bate-ponto-desde"
             rotulo="Passou a bater ponto aqui em"
             type="date"
             value={rascunho.batePontoDesde}
             onChange={(evento) => mudar('batePontoDesde', evento.target.value)}
+            disabled={propria}
+            aria-describedby={propria ? 'ficha-propria-explicacao' : undefined}
           />
           {/*
-            A DATA É REGISTRO, NÃO REGRA. Ela aparece na lista de pessoas e nada
-            mais a lê: quem libera a batida é a ficha ativa ligada à conta, com ou
-            sem a data, e a folha não acusa falta em dia sem batida. Ver
-            `batePontoDesde`, em `lib/cadastro.ts`.
+            A DATA DECIDE O SALDO, E NÃO A BATIDA. O saldo da pessoa começa na
+            mais nova entre ela e a "Saldo calculado a partir de" da
+            configuração (`regrasDoSaldo`); quem libera a batida é a ficha ativa
+            ligada à conta, com ou sem a data. Ver `batePontoDesde`, em
+            `lib/cadastro.ts`.
           */}
           <p className="text-[0.68rem] leading-relaxed text-faint">
-            A data em que a pessoa começou a bater ponto neste sistema. Ela fica guardada e aparece
-            na lista de pessoas, mas não muda nada no ponto: não libera nem bloqueia a batida e não
-            entra na folha. Preencha quando a pessoa começar de verdade.
+            O saldo de horas da pessoa começa na mais nova entre esta data e a “Saldo calculado a
+            partir de” das regras de jornada: antes dela, nenhum dia gera falta nem saldo. Em branco,
+            nenhum dia da pessoa é cobrado. A data não libera nem bloqueia a batida.
           </p>
+
+          {/* A jornada: a da empresa (grava nulo) ou uma própria (grava a semana). */}
+          <div className="rounded-xl border border-hair bg-ink-2 px-4 py-3">
+            <p className="mb-2 inline-flex items-center gap-1.5 font-mono text-[0.62rem] uppercase tracking-[0.2em] text-faint">
+              <Clock size={11} aria-hidden="true" />
+              Jornada prevista
+            </p>
+            <Escolha
+              id="ficha-jornada-origem"
+              rotulo="Jornada desta pessoa"
+              value={rascunho.origemDaJornada}
+              onChange={escolherOrigem}
+              disabled={propria || gravando}
+            >
+              <option value="empresa">Usar a da empresa</option>
+              <option value="propria">Jornada própria</option>
+            </Escolha>
+
+            {propria && jornadaGravada ? (
+              /* A própria ficha com jornada própria: a gravada, só para ler. */
+              <div className="mt-3">
+                <p className="mb-1.5 text-[0.7rem] text-plat-dim">A jornada própria desta pessoa:</p>
+                <ResumoDaJornada jornada={jornadaGravada} />
+                <p className="mt-2 text-[0.68rem] leading-relaxed text-faint">
+                  Vale no lugar da jornada da empresa em todos os dias.
+                </p>
+              </div>
+            ) : propria || rascunho.origemDaJornada === 'empresa' ? (
+              <div className="mt-3">
+                <p className="mb-1.5 text-[0.7rem] text-plat-dim">A jornada da empresa, hoje:</p>
+                {jornadaDaEmpresa ? (
+                  <ResumoDaJornada jornada={jornadaDaEmpresa} />
+                ) : (
+                  <p className="text-[0.68rem] leading-relaxed text-faint">
+                    Não deu para mostrar a jornada da empresa agora. A ficha grava do mesmo jeito.
+                  </p>
+                )}
+                <p className="mt-2 text-[0.68rem] leading-relaxed text-faint">
+                  Se a jornada da empresa mudar, esta pessoa acompanha.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-3">
+                <EditorDaSemana
+                  idBase="ficha-jornada"
+                  semana={rascunho.jornadaPropria}
+                  aoMudar={(semana) => setRascunho((antes) => ({ ...antes, jornadaPropria: semana }))}
+                  desabilitado={gravando}
+                />
+                <p className="mt-1 text-[0.68rem] leading-relaxed text-faint">
+                  Vale no lugar da jornada da empresa em todos os dias. Dia sem horário é dia sem
+                  jornada.
+                </p>
+              </div>
+            )}
+          </div>
 
           {erros.length > 0 && (
             <Aviso tom="erro">

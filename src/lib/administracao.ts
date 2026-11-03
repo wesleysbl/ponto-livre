@@ -10,6 +10,7 @@ import {
   type RegrasDeJornada,
 } from './configuracao'
 import { lerJornada, lerJornadaPropria } from './jornada'
+import { traduzirRecusaDaJornada } from './semana-da-jornada'
 import type { ConcessaoDeAdministracao, EstadoDoPin } from './pessoas'
 import type { DadosDaFicha, FichaDoFuncionario } from './cadastro'
 import { lerRespostaDoAcesso, type AcessoAoPonto } from './acesso'
@@ -109,7 +110,37 @@ function traduzirErro(mensagem: string): string {
    * A tela já valida antes de enviar (`configuracao.ts`). Estas frases são
    * para os caminhos que a validação não cobre: outra aba com a tela antiga,
    * uma chamada direta, ou uma faixa que mudou no banco e ainda não na tela.
+   *
+   * A JORNADA VEM ANTES DE TUDO. O gatilho `ponto_jornada_conferir` recusa com
+   * a frase de `ponto_jornada_problema` (23514, "Jornada invalida: ..."), sem
+   * acento; ela volta com o acento de `problemaDaJornada`, a mesma que a tela
+   * mostra quando recusa antes de gravar. Os CHECKs só falam quando o gatilho
+   * não rodou (um caminho sem ele).
    */
+  const daJornada = traduzirRecusaDaJornada(mensagem)
+  if (daJornada) return daJornada
+  if (/ponto_configuracao_jornada_valida|ponto_funcionarios_jornada_valida/.test(mensagem)) {
+    return 'O banco recusou a jornada: confira os horários de cada dia (até dois blocos, o fim depois do início, de 1h a 12h por dia).'
+  }
+  if (/ponto_configuracao_carga_da_jornada/.test(mensagem)) {
+    return 'O banco recusou a carga diária: ela é calculada a partir da jornada da empresa, e não digitada. Recarregue a página.'
+  }
+  /*
+   * A TRAVA DA PRÓPRIA FICHA (42501). O gatilho
+   * `ponto_funcionarios_guardar_propria_ficha` recusa, para todo mundo,
+   * inclusive o super admin, que o dono da ficha mude a própria jornada ou a
+   * data em que passou a bater ponto, e que crie ou ligue a si uma ficha que
+   * já tenha as duas. As duas decidem o saldo, e quem é dono da batida não
+   * decide o próprio ponto. A frase do banco vem sem acento e não diz o que
+   * fazer na tela; ela vem antes do 42501 genérico, lá embaixo, que mandaria
+   * entrar de novo.
+   */
+  if (/Quem [eé] dono da ficha n[aã]o muda a pr[oó]pria jornada/i.test(mensagem)) {
+    return 'Esta ficha é a sua, e quem é dono da ficha não muda a própria jornada nem a data em que passou a bater ponto aqui: as duas decidem o saldo de horas. Peça a outra pessoa que administra o ponto, ou ao super admin.'
+  }
+  if (/Quem [eé] dono da ficha n[aã]o a cria nem a liga/i.test(mensagem)) {
+    return 'Quem é dono da ficha não a cria nem a liga à própria conta com jornada própria ou com a data em que passou a bater ponto aqui. Grave a ficha com a jornada da empresa e sem a data, e peça a outra pessoa que administra o ponto que preencha as duas.'
+  }
   if (/ponto_configuracao_janela_protege/.test(mensagem)) {
     return 'O banco recusou a janela de duplicidade: ela precisa ficar entre 10 e 900 segundos. Desligar a proteção contra batida repetida não é configuração, é defeito.'
   }
@@ -377,11 +408,16 @@ export async function salvarEmpresa(dados: DadosDaEmpresa): Promise<Configuracao
 }
 
 /**
- * Grava as regras de jornada.
+ * Grava a jornada da empresa, as regras e a "Saldo calculado a partir de".
  *
  * A JANELA GRAVADA AQUI PASSA A VALER NA PRÓXIMA BATIDA, sem deploy: o gatilho
  * `ponto_carimbar_registro` lê `janela_duplicidade_segundos` desta linha a cada
  * INSERT. A regra mora no banco, e não no código.
+ *
+ * A CARGA DIÁRIA NÃO VAI: o gatilho `ponto_jornada_conferir` a calcula a
+ * partir da jornada (o maior total de um dia), por cima de qualquer número que
+ * chegue, e o CHECK `ponto_configuracao_carga_da_jornada` não aceita outra.
+ * Ela volta na linha gravada, e a tela mostra a que o banco calculou.
  */
 export async function salvarJornada(regras: RegrasDeJornada): Promise<ConfiguracaoDoPonto> {
   const { data, error } = await supabase
@@ -389,9 +425,10 @@ export async function salvarJornada(regras: RegrasDeJornada): Promise<Configurac
     .upsert(
       {
         id: ID_DA_CONFIGURACAO,
-        carga_diaria_minutos: regras.cargaDiariaMinutos,
+        jornada: regras.jornada,
         tolerancia_minutos: regras.toleranciaMinutos,
         janela_duplicidade_segundos: regras.janelaDuplicidadeSegundos,
+        saldo_a_partir_de: regras.saldoAPartirDe,
       },
       { onConflict: 'id' },
     )
@@ -748,9 +785,22 @@ function daFicha(linha: LinhaDaFicha): FichaDoFuncionario {
   }
 }
 
+/** Como gravar uma ficha. */
+export interface OpcoesDaFicha {
+  /**
+   * A ficha é (ou passa a ser) da conta desta sessão. Aí a gravação NÃO manda
+   * `jornada` nem `bate_ponto_desde`: o banco recusa que o dono da ficha mude
+   * as duas (`ponto_funcionarios_guardar_propria_ficha`), e a tela as mostra
+   * só para ler. Sem as duas no comando, a edição deixa no banco o que já está
+   * lá, mesmo que outra aba as tenha mudado depois da leitura; e a ficha nova
+   * nasce com as duas nulas, que é o que o banco aceita para a própria.
+   */
+  propria?: boolean
+}
+
 /** O que vai no INSERT e no UPDATE. Uma função só, para os dois não divergirem. */
-function paraOBanco(dados: DadosDaFicha) {
-  return {
+function paraOBanco(dados: DadosDaFicha, { propria = false }: OpcoesDaFicha = {}) {
+  const valores = {
     usuario_id: dados.usuarioId,
     nome_completo: dados.nomeCompleto,
     cpf: dados.cpf,
@@ -761,7 +811,15 @@ function paraOBanco(dados: DadosDaFicha) {
     ctps: dados.ctps,
     ctps_serie: dados.ctpsSerie,
     centro_custo: dados.centroCusto,
+  }
+  if (propria) return valores
+  return {
+    ...valores,
     bate_ponto_desde: dados.batePontoDesde,
+    // NULO = segue a da empresa ("Usar a da empresa" na ficha). Vai sempre, na
+    // criação e na edição: a ficha editada sem mexer na jornada manda de volta
+    // a mesma que leu.
+    jornada: dados.jornada,
   }
 }
 
@@ -818,8 +876,9 @@ export async function lerFichas(): Promise<FichaDoFuncionario[]> {
 export async function salvarFicha(
   id: string | null,
   dados: DadosDaFicha,
+  opcoes: OpcoesDaFicha = {},
 ): Promise<FichaDoFuncionario> {
-  const valores = paraOBanco(dados)
+  const valores = paraOBanco(dados, opcoes)
 
   const consulta = id
     ? supabase.from('ponto_funcionarios').update(valores).eq('id', id)

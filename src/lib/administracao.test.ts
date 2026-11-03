@@ -100,6 +100,7 @@ const {
   lerSuperAdmins,
   pedirAcaoDeConta,
   salvarFicha,
+  salvarJornada,
   lerConfiguracao,
   lerFichas,
   lerLocalAtivo,
@@ -255,6 +256,7 @@ describe('vincularFicha e desvincularFicha', () => {
         ctpsSerie: null,
         centroCusto: null,
         batePontoDesde: null,
+        jornada: null,
       }),
     ).rejects.toThrow(/Só o super admin libera o acesso/)
   })
@@ -613,23 +615,172 @@ describe('a jornada e a data do saldo nas leituras', () => {
     ])
   })
 
-  it('gravar a ficha não manda a jornada própria: o formulário não a edita, e a do banco fica', async () => {
+  /** A ficha como `validarFicha` a entrega, com a jornada própria de quarta à tarde. */
+  const DADOS_DA_FICHA = {
+    usuarioId: CONTA,
+    nomeCompleto: 'Ana Lima',
+    cpf: null,
+    matricula: null,
+    cargo: 'Vendas',
+    admissao: null,
+    desligamento: null,
+    ctps: null,
+    ctpsSerie: null,
+    centroCusto: null,
+    batePontoDesde: '2026-10-01',
+    jornada: [{ dia: 3 as const, inicio: '13:00', fim: '19:00' }],
+  }
+
+  it('gravar a ficha manda a jornada própria e a data; "usar a da empresa" manda nula', async () => {
     estado.respostaDaTabela = () => ({ data: LINHA_DA_FICHA, error: null })
-    await salvarFicha('f1', {
-      usuarioId: CONTA,
-      nomeCompleto: 'Ana Lima',
-      cpf: null,
-      matricula: null,
+    await salvarFicha('f1', DADOS_DA_FICHA)
+    expect(argsDe('update')?.[0]).toMatchObject({
       cargo: 'Vendas',
-      admissao: null,
-      desligamento: null,
-      ctps: null,
-      ctpsSerie: null,
-      centroCusto: null,
-      batePontoDesde: '2026-10-01',
+      bate_ponto_desde: '2026-10-01',
+      jornada: [{ dia: 3, inicio: '13:00', fim: '19:00' }],
     })
-    const valores = argsDe('update')?.[0] as Record<string, unknown>
-    expect(valores).not.toHaveProperty('jornada')
-    expect(valores).toMatchObject({ cargo: 'Vendas', bate_ponto_desde: '2026-10-01' })
+
+    await salvarFicha(null, { ...DADOS_DA_FICHA, jornada: null })
+    expect(estado.consultas[1].operacoes.find((operacao) => operacao.metodo === 'insert')?.args[0]).toHaveProperty(
+      'jornada',
+      null,
+    )
+  })
+
+  it('a ficha da própria sessão não manda a jornada nem a data, na edição e na criação', async () => {
+    estado.respostaDaTabela = () => ({ data: LINHA_DA_FICHA, error: null })
+    await salvarFicha('f1', DADOS_DA_FICHA, { propria: true })
+    const editada = argsDe('update')?.[0] as Record<string, unknown>
+    expect(editada).not.toHaveProperty('jornada')
+    expect(editada).not.toHaveProperty('bate_ponto_desde')
+    expect(editada).toMatchObject({ usuario_id: CONTA, cargo: 'Vendas' })
+
+    await salvarFicha(null, DADOS_DA_FICHA, { propria: true })
+    const criada = estado.consultas[1].operacoes.find((operacao) => operacao.metodo === 'insert')?.args[0] as Record<
+      string,
+      unknown
+    >
+    expect(criada).not.toHaveProperty('jornada')
+    expect(criada).not.toHaveProperty('bate_ponto_desde')
+  })
+
+})
+
+describe('a gravação da jornada da empresa e as recusas dela, traduzidas', () => {
+  const LINHA_GRAVADA = {
+    id: 1,
+    razao_social: null,
+    nome_fantasia: null,
+    cnpj: null,
+    endereco: null,
+    cidade: null,
+    uf: null,
+    carga_diaria_minutos: 300,
+    jornada: [{ dia: 1, inicio: '09:00', fim: '14:00' }],
+    saldo_a_partir_de: '2026-09-01',
+    tolerancia_minutos: 5,
+    janela_duplicidade_segundos: 90,
+    atualizado_em: null,
+  }
+  const REGRAS = {
+    jornada: [{ dia: 1 as const, inicio: '09:00', fim: '14:00' }],
+    toleranciaMinutos: 5,
+    janelaDuplicidadeSegundos: 90,
+    saldoAPartirDe: '2026-09-01',
+  }
+
+  it('manda a jornada, a tolerância, a janela e a data, e não a carga: o banco a calcula', async () => {
+    estado.respostaDaTabela = () => ({ data: LINHA_GRAVADA, error: null })
+    const gravada = await salvarJornada(REGRAS)
+    expect(estado.consultas[0].tabela).toBe('ponto_configuracao')
+    const enviado = argsDe('upsert')?.[0] as Record<string, unknown>
+    expect(enviado).toEqual({
+      id: 1,
+      jornada: [{ dia: 1, inicio: '09:00', fim: '14:00' }],
+      tolerancia_minutos: 5,
+      janela_duplicidade_segundos: 90,
+      saldo_a_partir_de: '2026-09-01',
+    })
+    expect(enviado).not.toHaveProperty('carga_diaria_minutos')
+    expect(gravada).toMatchObject({ cargaDiariaMinutos: 300, saldoAPartirDe: '2026-09-01' })
+  })
+
+  /** A frase que a tela mostra para uma recusa do banco na gravação da jornada. */
+  async function fraseDaRecusa(message: string, code?: string): Promise<string> {
+    estado.respostaDaTabela = () => ({ data: null, error: { message, code } })
+    return salvarJornada(REGRAS).then(
+      () => 'gravou',
+      (falha: Error) => falha.message,
+    )
+  }
+
+  it('a recusa "Jornada invalida" do gatilho chega com acento, recortada', async () => {
+    expect(
+      await fraseDaRecusa(
+        'Jornada invalida: o dia 2 (terca) soma 750 min; um dia com jornada soma de 60 a 720 min (de 1 h a 12 h).',
+        '23514',
+      ),
+    ).toBe('Jornada inválida: o dia 2 (terça) soma 750 min; um dia com jornada soma de 60 a 720 min (de 1 h a 12 h).')
+  })
+
+  it('os CHECKs da jornada e da carga dizem o que conferir', async () => {
+    expect(
+      await fraseDaRecusa('new row for relation "ponto_configuracao" violates check constraint "ponto_configuracao_jornada_valida"'),
+    ).toMatch(/^O banco recusou a jornada: confira os horários de cada dia/)
+    expect(
+      await fraseDaRecusa('new row for relation "ponto_funcionarios" violates check constraint "ponto_funcionarios_jornada_valida"'),
+    ).toMatch(/^O banco recusou a jornada/)
+    expect(
+      await fraseDaRecusa('new row for relation "ponto_configuracao" violates check constraint "ponto_configuracao_carga_da_jornada"'),
+    ).toBe('O banco recusou a carga diária: ela é calculada a partir da jornada da empresa, e não digitada. Recarregue a página.')
+  })
+})
+
+describe('a trava da própria ficha, traduzida', () => {
+  /** As duas frases do gatilho `ponto_funcionarios_guardar_propria_ficha`, como o banco as escreve. */
+  const MUDAR_A_PROPRIA =
+    'Quem e dono da ficha nao muda a propria jornada nem a data em que passou a bater ponto: peca a outra pessoa que administra o ponto ou ao super admin'
+  const LIGAR_A_SI =
+    'Quem e dono da ficha nao a cria nem a liga a propria conta com jornada propria ou com a data em que passou a bater ponto: grave a ficha sem as duas e peca a outra pessoa que administra o ponto que as preencha'
+
+  it('mudar a jornada ou a data da própria ficha: a frase diz por que e a quem pedir', async () => {
+    estado.respostaDaTabela = () => ({ data: null, error: { message: MUDAR_A_PROPRIA, code: '42501' } })
+    await expect(
+      salvarFicha('f1', {
+        usuarioId: CONTA,
+        nomeCompleto: 'Ana Lima',
+        cpf: null,
+        matricula: null,
+        cargo: null,
+        admissao: null,
+        desligamento: null,
+        ctps: null,
+        ctpsSerie: null,
+        centroCusto: null,
+        batePontoDesde: '2026-10-01',
+        jornada: null,
+      }),
+    ).rejects.toThrow(
+      'Esta ficha é a sua, e quem é dono da ficha não muda a própria jornada nem a data em que passou a bater ponto aqui: as duas decidem o saldo de horas. Peça a outra pessoa que administra o ponto, ou ao super admin.',
+    )
+  })
+
+  it('ligar a si uma ficha com jornada própria ou com a data: a frase diz como fazer', async () => {
+    estado.respostaDaTabela = () => ({ data: null, error: { message: LIGAR_A_SI, code: '42501' } })
+    await expect(vincularFicha('f1', CONTA)).rejects.toThrow(
+      'Quem é dono da ficha não a cria nem a liga à própria conta com jornada própria ou com a data em que passou a bater ponto aqui. Grave a ficha com a jornada da empresa e sem a data, e peça a outra pessoa que administra o ponto que preencha as duas.',
+    )
+  })
+
+  it('a frase não cai na de "sessão não administra", que é a do 42501 genérico', async () => {
+    for (const message of [MUDAR_A_PROPRIA, LIGAR_A_SI]) {
+      estado.respostaDaTabela = () => ({ data: null, error: { message: `${message} (42501)`, code: '42501' } })
+      const frase = await vincularFicha('f1', CONTA).then(
+        () => 'ligou',
+        (falha: Error) => falha.message,
+      )
+      expect(frase).toMatch(/^(Esta ficha é a sua|Quem é dono da ficha)/)
+      expect(frase).not.toMatch(/Sua sessão não administra/)
+    }
   })
 })

@@ -24,6 +24,7 @@
  */
 import { ehDiaValido } from './horas'
 import type { Jornada } from './jornada'
+import { lerSemana, type RascunhoDaSemana } from './semana-da-jornada'
 
 /* ------------------------------------------------------------------ */
 /* Tipos                                                               */
@@ -41,29 +42,36 @@ export interface DadosDaEmpresa {
 }
 
 /**
- * As regras de jornada, gravadas pela área de administração.
+ * As regras de jornada: é o que o formulário da jornada GRAVA.
  *
- * A janela vale na batida: o banco a lê a cada uma. A tolerância entra no
- * saldo do dia (`saldo.ts`). A carga diária é calculada pelo banco a partir da
- * jornada da empresa (o maior total de um dia), e o saldo não a usa: usa os
- * blocos de cada dia.
+ * A janela vale na batida: o banco a lê a cada uma. A jornada e a tolerância
+ * entram no saldo do dia (`saldo.ts`), e a "Saldo calculado a partir de" diz
+ * desde quando ele é cobrado.
+ *
+ * A CARGA DIÁRIA NÃO ESTÁ AQUI: ela não é digitada. O banco a calcula a partir
+ * da jornada da empresa (o maior total de um dia) e a devolve em
+ * `ConfiguracaoDoPonto`, só para ler.
  */
 export interface RegrasDeJornada {
-  cargaDiariaMinutos: number
+  /** A jornada da EMPRESA (`ponto_configuracao.jornada`), conferida por `lerJornada`. */
+  jornada: Jornada
   toleranciaMinutos: number
   /** Janela em que a segunda batida da mesma pessoa é recusada. */
   janelaDuplicidadeSegundos: number
-}
-
-export interface ConfiguracaoDoPonto extends DadosDaEmpresa, RegrasDeJornada {
-  /** A jornada da EMPRESA (`ponto_configuracao.jornada`), conferida por `lerJornada`. */
-  jornada: Jornada
   /**
    * "Saldo calculado a partir de" (`ponto_configuracao.saldo_a_partir_de`,
    * `AAAA-MM-DD`): antes deste dia, nenhum dia de ninguém é cobrado. Quem a
    * combina com a data da ficha é `regrasDoSaldo`, em `saldo.ts`.
    */
   saldoAPartirDe: string
+}
+
+export interface ConfiguracaoDoPonto extends DadosDaEmpresa, RegrasDeJornada {
+  /**
+   * Calculada pelo banco a partir da jornada da empresa (`cargaDeReferencia`,
+   * o maior total de um dia). Só leitura: o app não manda este número.
+   */
+  cargaDiariaMinutos: number
   /** ISO 8601 da última gravação. É o que a tela mostra quando duas abas brigam. */
   atualizadoEm: string | null
 }
@@ -147,10 +155,9 @@ export function lerInteiro(texto: string): number | null {
 /**
  * `"08:00"` -> 480 minutos. Também aceita `"8:00"` e `"8"` (horas cheias).
  *
- * POR QUE A CARGA DIÁRIA É DIGITADA EM HORA E NÃO EM MINUTO: ninguém pensa a
- * própria jornada em "quatrocentos e oitenta". Pedir minutos convida
- * exatamente o engano que o CHECK do banco recusa — alguém digita `8` querendo
- * dizer oito horas e configura oito minutos de jornada.
+ * UMA DURAÇÃO SE ESCREVE EM HORA E NÃO EM MINUTO: ninguém pensa a própria
+ * jornada em "quatrocentos e oitenta". Pedir minutos convida o engano de
+ * digitar `8` querendo dizer oito horas e ficar com oito minutos.
  */
 export function lerDuracao(texto: string): number | null {
   const limpo = texto.trim()
@@ -298,34 +305,46 @@ export function validarLocal(rascunho: RascunhoDoLocal): Leitura<DadosDoLocal> {
   }
 }
 
-/** O que o formulário das regras entrega. Carga em `HH:MM`, o resto em número. */
+/**
+ * O que o formulário das regras entrega: a semana da jornada da empresa (os
+ * blocos de cada dia, em texto), os dois números e a data, em texto.
+ */
 export interface RascunhoDaJornada {
-  cargaDiaria: string
+  semana: RascunhoDaSemana
   toleranciaMinutos: string
   janelaDuplicidadeSegundos: string
+  /** `AAAA-MM-DD`, como sai de um `<input type="date">`. */
+  saldoAPartirDe: string
 }
+
+/** A frase da jornada da empresa sem nenhum dia. */
+export const JORNADA_DA_EMPRESA_VAZIA =
+  'A jornada da empresa precisa de pelo menos um dia com horário. O dia sem horário é dia sem jornada.'
+
+/** A frase da "Saldo calculado a partir de" em branco ou torta. */
+export const SALDO_SEM_DATA =
+  'Saldo calculado a partir de: escolha uma data. O saldo de horas e as faltas de cada pessoa só contam a partir dela.'
 
 /**
  * Lê o formulário das regras de jornada.
  *
+ * A JORNADA É LIDA POR `lerSemana`, com as frases do banco (ver
+ * `semana-da-jornada.ts`). A carga diária não é lida: o banco a calcula.
+ *
+ * A DATA DO SALDO É OBRIGATÓRIA, como no banco (`NOT NULL`), e qualquer dia
+ * vale: recuar a data passa a cobrar os dias desde ela, e avançar deixa de
+ * cobrar os de antes. Quem decide é quem administra; a tela só diz o que cada
+ * escolha faz.
+ *
  * A JANELA DE DUPLICIDADE TEM PISO: desligar a proteção contra batida
  * repetida não é configuração, é defeito. Zero é recusado aqui e recusado no
- * banco — a tela explica, o banco garante.
+ * banco: a tela explica, o banco garante.
  */
 export function validarJornada(rascunho: RascunhoDaJornada): Leitura<RegrasDeJornada> {
   const erros: string[] = []
 
-  const cargaDiariaMinutos = lerDuracao(rascunho.cargaDiaria)
-  if (cargaDiariaMinutos === null) {
-    erros.push('Carga diária: escreva no formato horas:minutos, como 08:00.')
-  } else if (
-    cargaDiariaMinutos < FAIXAS.cargaDiariaMinutos.min ||
-    cargaDiariaMinutos > FAIXAS.cargaDiariaMinutos.max
-  ) {
-    erros.push(
-      `A carga diária precisa ficar entre ${escreverDuracao(FAIXAS.cargaDiariaMinutos.min)} e ${escreverDuracao(FAIXAS.cargaDiariaMinutos.max)}. Fora disso o banco recusa.`,
-    )
-  }
+  const jornada = lerSemana(rascunho.semana, JORNADA_DA_EMPRESA_VAZIA)
+  if (!jornada.ok) erros.push(...jornada.erros)
 
   const toleranciaMinutos = lerInteiro(rascunho.toleranciaMinutos)
   if (toleranciaMinutos === null) {
@@ -344,7 +363,7 @@ export function validarJornada(rascunho: RascunhoDaJornada): Leitura<RegrasDeJor
     erros.push('Janela de duplicidade: digite um número inteiro de segundos.')
   } else if (janelaDuplicidadeSegundos < FAIXAS.janelaDuplicidadeSegundos.min) {
     erros.push(
-      `A janela de duplicidade não pode ser menor que ${FAIXAS.janelaDuplicidadeSegundos.min} segundos. Desligar a proteção contra batida repetida não é configuração, é defeito — o banco também recusa.`,
+      `A janela de duplicidade não pode ser menor que ${FAIXAS.janelaDuplicidadeSegundos.min} segundos. Desligar a proteção contra batida repetida não é configuração, é defeito: o banco também recusa.`,
     )
   } else if (janelaDuplicidadeSegundos > FAIXAS.janelaDuplicidadeSegundos.max) {
     erros.push(
@@ -352,13 +371,17 @@ export function validarJornada(rascunho: RascunhoDaJornada): Leitura<RegrasDeJor
     )
   }
 
-  if (erros.length > 0) return { ok: false, erros }
+  const saldoAPartirDe = rascunho.saldoAPartirDe.trim()
+  if (!ehDiaValido(saldoAPartirDe)) erros.push(SALDO_SEM_DATA)
+
+  if (erros.length > 0 || !jornada.ok) return { ok: false, erros }
   return {
     ok: true,
     valor: {
-      cargaDiariaMinutos: cargaDiariaMinutos as number,
+      jornada: jornada.valor,
       toleranciaMinutos: toleranciaMinutos as number,
       janelaDuplicidadeSegundos: janelaDuplicidadeSegundos as number,
+      saldoAPartirDe,
     },
   }
 }

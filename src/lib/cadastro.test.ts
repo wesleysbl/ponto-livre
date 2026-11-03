@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest'
+import { JORNADA_SEMENTE } from './jornada'
+import { rascunhoDaSemana, semanaVazia } from './semana-da-jornada'
 import {
   camposFaltandoDaFicha,
   cpfEhValido,
   descreverVinculo,
   escreverData,
+  fichaDaSessao,
   filtrarFichas,
   formatarCpf,
   lerData,
   ordenarFichas,
   resumirFichas,
   somenteDigitosDeCpf,
+  trocarOrigemDaJornada,
   validarFicha,
   type FichaDoFuncionario,
   type RascunhoDaFicha,
@@ -25,9 +29,10 @@ import {
  *   • ficha sem conta de acesso é válida.
  *
  * Mais o desligamento antes da admissão, que faria cada dia do intervalo sair
- * ao mesmo tempo antes de existir e depois do fim; e a ficha sem
- * `batePontoDesde`, que é válida — a data é registro (aparece na lista de
- * pessoas) e não muda a batida nem a folha.
+ * ao mesmo tempo antes de existir e depois do fim; a ficha sem
+ * `batePontoDesde`, que é válida (sem a data, nenhum dia da pessoa é cobrado
+ * no saldo); a jornada própria ("usar a da empresa" grava nula); e a ficha da
+ * própria sessão, que a tela mostra bloqueada.
  */
 
 /** Uma ficha em branco, para cada teste mexer só no que lhe interessa. */
@@ -43,6 +48,8 @@ const RASCUNHO_VAZIO: RascunhoDaFicha = {
   centroCusto: '',
   usuarioId: '',
   batePontoDesde: '',
+  origemDaJornada: 'empresa',
+  jornadaPropria: semanaVazia(),
 }
 
 function rascunho(mudancas: Partial<RascunhoDaFicha> = {}): RascunhoDaFicha {
@@ -264,6 +271,73 @@ describe('validarFicha', () => {
 
     const comData = validarFicha(rascunho({ batePontoDesde: '2026-09-08' }))
     expect(comData.ok && comData.valor.batePontoDesde).toBe('2026-09-08')
+  })
+})
+
+describe('validarFicha: a jornada própria', () => {
+  const SABADO_DE_MANHA = { ...semanaVazia(), 6: [{ inicio: '08:00', fim: '12:00' }] }
+
+  it('"usar a da empresa" grava NULO, e não confere os blocos guardados no rascunho', () => {
+    const torta = { ...semanaVazia(), 1: [{ inicio: '12:00', fim: '08:00' }] }
+    const leitura = validarFicha(rascunho({ origemDaJornada: 'empresa', jornadaPropria: torta }))
+    expect(leitura.ok, reclamacoes(leitura)).toBe(true)
+    expect(leitura.ok && leitura.valor.jornada).toBeNull()
+  })
+
+  it('"jornada própria" grava a lista, em ordem', () => {
+    const leitura = validarFicha(rascunho({ origemDaJornada: 'propria', jornadaPropria: SABADO_DE_MANHA }))
+    expect(leitura.ok, reclamacoes(leitura)).toBe(true)
+    expect(leitura.ok && leitura.valor.jornada).toEqual([{ dia: 6, inicio: '08:00', fim: '12:00' }])
+  })
+
+  it('jornada própria vazia é recusada: para seguir a da empresa existe a escolha', () => {
+    const leitura = validarFicha(rascunho({ origemDaJornada: 'propria', jornadaPropria: semanaVazia() }))
+    expect(leitura.ok).toBe(false)
+    expect(reclamacoes(leitura)).toMatch(/sem nenhum dia.*usar a da empresa/)
+  })
+
+  it('bloco invertido na jornada própria: a frase do banco, junto com as outras', () => {
+    const leitura = validarFicha(
+      rascunho({
+        nomeCompleto: '',
+        origemDaJornada: 'propria',
+        jornadaPropria: { ...semanaVazia(), 2: [{ inicio: '17:00', fim: '13:00' }] },
+      }),
+    )
+    expect(leitura.ok).toBe(false)
+    expect(reclamacoes(leitura)).toMatch(/nome completo/)
+    expect(reclamacoes(leitura)).toMatch(
+      /Jornada inválida: no dia 2 \(terça\), o bloco 17:00-13:00 não termina depois de começar/,
+    )
+  })
+
+  it('escolher a própria com a semana vazia começa igual à da empresa; voltar não apaga o digitado', () => {
+    const propria = trocarOrigemDaJornada(rascunho(), 'propria', JORNADA_SEMENTE)
+    expect(propria.origemDaJornada).toBe('propria')
+    expect(propria.jornadaPropria).toEqual(rascunhoDaSemana(JORNADA_SEMENTE))
+
+    const editada = { ...propria, jornadaPropria: SABADO_DE_MANHA }
+    const deVolta = trocarOrigemDaJornada(editada, 'empresa', JORNADA_SEMENTE)
+    expect(deVolta.origemDaJornada).toBe('empresa')
+    expect(trocarOrigemDaJornada(deVolta, 'propria', JORNADA_SEMENTE).jornadaPropria).toEqual(SABADO_DE_MANHA)
+
+    // Sem a da empresa (configuração não carregou), começa vazia.
+    expect(trocarOrigemDaJornada(rascunho(), 'propria', null).jornadaPropria).toEqual(semanaVazia())
+  })
+})
+
+describe('fichaDaSessao: a ficha ligada à conta de quem está logado', () => {
+  const SESSAO = '00000000-0000-4000-8000-000000000009'
+
+  it('é a própria só quando a conta da ficha é a da sessão', () => {
+    expect(fichaDaSessao(SESSAO, SESSAO)).toBe(true)
+    expect(fichaDaSessao('00000000-0000-4000-8000-000000000002', SESSAO)).toBe(false)
+  })
+
+  it('ficha sem conta ou sessão sem conta nunca é a própria', () => {
+    expect(fichaDaSessao(null, SESSAO)).toBe(false)
+    expect(fichaDaSessao(SESSAO, null)).toBe(false)
+    expect(fichaDaSessao(null, null)).toBe(false)
   })
 })
 

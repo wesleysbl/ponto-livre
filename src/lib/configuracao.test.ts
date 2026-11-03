@@ -16,14 +16,18 @@ import {
   validarJornada,
   validarLocal,
   type DadosDaEmpresa,
+  type RascunhoDaJornada,
 } from './configuracao'
+import { JORNADA_SEMENTE } from './jornada'
+import { rascunhoDaSemana, semanaVazia } from './semana-da-jornada'
 
 /*
  * Os cenários das regras de configuração:
  *   • latitude fora de -90..90 recusada, longitude fora de -180..180 recusada,
  *     raio zero ou negativo recusado;
- *   • carga diária fora de uma faixa razoável recusada, e janela de
- *     duplicidade menor que o mínimo recusada.
+ *   • a jornada da empresa lida pela semana (com as frases do banco), sem a
+ *     carga digitada, e janela de duplicidade menor que o mínimo recusada;
+ *   • a "Saldo calculado a partir de" obrigatória, com qualquer dia válido.
  *
  * Mais os defeitos silenciosos que a leitura de texto esconde — a vírgula do
  * teclado brasileiro, e o `parseFloat` que aceita lixo depois do número.
@@ -36,10 +40,11 @@ const LOCAL_BOM = {
   raioMetros: '150',
 }
 
-const JORNADA_BOA = {
-  cargaDiaria: '08:00',
+const JORNADA_BOA: RascunhoDaJornada = {
+  semana: rascunhoDaSemana(JORNADA_SEMENTE),
   toleranciaMinutos: '10',
   janelaDuplicidadeSegundos: '60',
+  saldoAPartirDe: '2026-11-03',
 }
 
 const EMPRESA_VAZIA = {
@@ -198,30 +203,51 @@ describe('validarLocal — a coordenada', () => {
 })
 
 describe('validarJornada — as regras', () => {
-  it('aceita a jornada padrão', () => {
+  it('aceita a jornada padrão, e devolve a jornada e a data em vez da carga digitada', () => {
     const leitura = validarJornada(JORNADA_BOA)
     expect(leitura.ok).toBe(true)
     if (!leitura.ok) return
     expect(leitura.valor).toEqual({
-      cargaDiariaMinutos: 480,
+      jornada: JORNADA_SEMENTE,
       toleranciaMinutos: 10,
       janelaDuplicidadeSegundos: 60,
+      saldoAPartirDe: '2026-11-03',
     })
+    // A carga diária não é lida: quem a calcula é o banco.
+    expect(leitura.valor).not.toHaveProperty('cargaDiariaMinutos')
   })
 
-  it('recusa carga diária fora da faixa razoável', () => {
-    // "8" digitado onde se esperava minutos vira 8 minutos de jornada em quem
-    // não converte; aqui `08:00` é a leitura, e a faixa pega o resto.
-    for (const cargaDiaria of ['00:30', '13:00', '24:00']) {
-      const leitura = validarJornada({ ...JORNADA_BOA, cargaDiaria })
-      expect(leitura.ok).toBe(false)
-      expect(reclamacoes(leitura)).toMatch(/carga diária precisa ficar entre 01:00 e 12:00/)
+  it('recusa a semana sem nenhum dia, com a frase da empresa', () => {
+    const leitura = validarJornada({ ...JORNADA_BOA, semana: semanaVazia() })
+    expect(leitura.ok).toBe(false)
+    expect(reclamacoes(leitura)).toMatch(/pelo menos um dia com horário/)
+  })
+
+  it('recusa o bloco invertido com a frase do banco, e junta as outras reclamações', () => {
+    const semana = { ...semanaVazia(), 1: [{ inicio: '12:00', fim: '08:00' }] }
+    const leitura = validarJornada({ ...JORNADA_BOA, semana, toleranciaMinutos: '61', saldoAPartirDe: '' })
+    expect(leitura.ok).toBe(false)
+    if (leitura.ok) return
+    expect(leitura.erros).toEqual([
+      'Jornada inválida: no dia 1 (segunda), o bloco 12:00-08:00 não termina depois de começar (o fim precisa ser depois do início).',
+      'A tolerância precisa ficar entre 0 e 60 minutos.',
+      'Saldo calculado a partir de: escolha uma data. O saldo de horas e as faltas de cada pessoa só contam a partir dela.',
+    ])
+  })
+
+  it('a "Saldo calculado a partir de" é obrigatória e precisa ser um dia de verdade', () => {
+    for (const saldoAPartirDe of ['', '   ', '2026-02-30', '03/11/2026']) {
+      const leitura = validarJornada({ ...JORNADA_BOA, saldoAPartirDe })
+      expect(leitura.ok, saldoAPartirDe).toBe(false)
+      expect(reclamacoes(leitura)).toMatch(/^Saldo calculado a partir de: escolha uma data\./)
     }
   })
 
-  it('aceita as bordas da carga diária', () => {
-    expect(validarJornada({ ...JORNADA_BOA, cargaDiaria: '01:00' }).ok).toBe(true)
-    expect(validarJornada({ ...JORNADA_BOA, cargaDiaria: '12:00' }).ok).toBe(true)
+  it('a "Saldo calculado a partir de" aceita recuar e avançar: qualquer dia vale, como no banco', () => {
+    for (const saldoAPartirDe of ['2020-01-01', '2026-11-03', '2030-12-31']) {
+      const leitura = validarJornada({ ...JORNADA_BOA, saldoAPartirDe })
+      expect(leitura.ok && leitura.valor.saldoAPartirDe).toBe(saldoAPartirDe)
+    }
   })
 
   it('recusa janela de duplicidade menor que o mínimo — zero inclusive', () => {

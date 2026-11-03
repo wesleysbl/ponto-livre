@@ -212,11 +212,12 @@ test.describe('a administração, no computador', () => {
       await page.getByRole('button', { name: 'Salvar os dados da empresa' }).click()
       await expect(page.getByText('Dados da empresa salvos. Ainda falta preencher: CNPJ.')).toBeVisible()
 
-      await page.getByLabel('Carga diária esperada (horas:minutos)', { exact: true }).fill('08:00')
+      // A jornada da empresa abre com a semente (seg a sex, 8 h), e a carga não se digita.
+      await expect(page.locator('#jornada-empresa-1-0-inicio')).toHaveValue('08:00')
       await page.getByLabel('Tolerância, em minutos', { exact: true }).fill('10')
       await page.getByLabel('Janela que recusa batida repetida, em segundos', { exact: true }).fill('60')
-      await page.getByRole('button', { name: 'Salvar as regras' }).click()
-      await expect(page.getByText(/^Regras salvas\./)).toBeVisible()
+      await page.getByRole('button', { name: 'Salvar a jornada e as regras' }).click()
+      await expect(page.getByText(/^Jornada e regras salvas\. A carga diária ficou em 8h00/)).toBeVisible()
 
       await page.getByLabel('Nome do local', { exact: true }).fill('Sede da Empresa Exemplo')
       await page.getByLabel('Latitude', { exact: true }).fill(LOCAL.latitude)

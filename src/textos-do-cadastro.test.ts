@@ -18,9 +18,11 @@ import type { FichaDoFuncionario } from './lib/cadastro'
  *     por SQL do dono do banco, no painel do Supabase, que é como nasce o
  *     primeiro (`supabase/primeiro-super-admin.sql`). O e-mail de super admin
  *     muda por lá também, porque a função de contas recusa trocá-lo;
- *   • a data "Passou a bater ponto aqui em" é registro: fica guardada e
- *     aparece na lista de pessoas, sem mudar a batida nem a folha. A data de
- *     desligamento também fica registrada na ficha;
+ *   • a data "Passou a bater ponto aqui em" e a jornada decidem o saldo de
+ *     horas: o saldo começa na mais nova entre a data e a "Saldo calculado a
+ *     partir de", e sem a data nenhum dia da pessoa é cobrado. Na ficha da
+ *     própria sessão as duas ficam só para ler, com a frase do porquê. A data
+ *     de desligamento fica registrada na ficha;
  *   • da ficha, a folha leva o nome completo. A ficha, a caixa de desativar e
  *     a de ligar ficha e conta dizem isso, e os outros campos ficam no
  *     cadastro (o que falta neles é pendência de cadastro);
@@ -50,7 +52,10 @@ vi.mock('./hooks/useAuth', () => ({ useAuth: () => null }))
 
 const { FormularioDeConta, FormularioDeNovaConta } = await import('./components/CaixasDeConta')
 const { LinhaDePessoa } = await import('./components/ListaDePessoas')
-const { CaixaDeAtivo, FormularioDaFicha } = await import('./components/FichaDoFuncionario')
+const { CaixaDeAtivo, FormularioDaFicha, POR_QUE_A_PROPRIA_FICHA_E_SO_PARA_LER } = await import(
+  './components/FichaDoFuncionario'
+)
+const { JORNADA_SEMENTE } = await import('./lib/jornada')
 const { CaixaDeVinculo } = await import('./components/CaixaDeVinculo')
 const { acoesDaPessoa, contasSemFicha, montarPessoas } = await import('./lib/pessoas')
 
@@ -325,20 +330,33 @@ const CAMPOS_DA_FICHA = [
   'Centro de custo',
 ]
 
-/** A frase do topo da caixa da ficha: o que dela sai na folha. */
+/** A frase do topo da caixa da ficha: o que dela sai na folha, e o que decide o saldo. */
 const O_QUE_SAI_NA_FOLHA =
-  'O nome completo é o que sai na folha que a pessoa assina; os outros campos ficam guardados no cadastro. Deixar um campo vazio é melhor do que inventar.'
+  'O nome completo é o que sai na folha que a pessoa assina, e a data em que passou a bater ponto aqui e a jornada decidem o saldo de horas; os outros campos ficam guardados no cadastro. Deixar um campo vazio é melhor do que inventar.'
 
 /** A frase embaixo do campo "Passou a bater ponto aqui em". */
-const A_DATA_E_REGISTRO =
-  'A data em que a pessoa começou a bater ponto neste sistema. Ela fica guardada e aparece na lista de pessoas, mas não muda nada no ponto: não libera nem bloqueia a batida e não entra na folha. Preencha quando a pessoa começar de verdade.'
+const A_DATA_DECIDE_O_SALDO =
+  'O saldo de horas da pessoa começa na mais nova entre esta data e a “Saldo calculado a partir de” das regras de jornada: antes dela, nenhum dia gera falta nem saldo. Em branco, nenhum dia da pessoa é cobrado. A data não libera nem bloqueia a batida.'
+
+/** O quadro da jornada, até a escolha: o título, o rótulo e as duas opções. */
+const A_ESCOLHA_DA_JORNADA = ['Jornada prevista', 'Jornada desta pessoa', 'Usar a da empresa', 'Jornada própria']
+
+/** A semente (seg a sex, 08:00-12:00 e 13:00-17:00), como `ResumoDaJornada` a escreve. */
+const A_SEMENTE_PARA_LER = [
+  ...['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'].flatMap((dia) => [dia, '08:00-12:00 e 13:00-17:00', '· 8h00']),
+  'Sábado',
+  'sem jornada',
+  'Domingo',
+  'sem jornada',
+]
 
 describe('a ficha do funcionário', () => {
-  it('diz que da ficha só o nome completo sai na folha, e que a data "Passou a bater ponto aqui em" é registro', () => {
+  it('diz que da ficha só o nome completo sai na folha, e que a data e a jornada decidem o saldo', () => {
     const html = desenhar(
       createElement(FormularioDaFicha, {
         ficha: FICHA_DA_BRUNA,
         rotuloDaConta: 'Bruna Costa — bruna@example.com',
+        jornadaDaEmpresa: JORNADA_SEMENTE,
         gravando: false,
         erro: null,
         aoSalvar: nada,
@@ -354,10 +372,56 @@ describe('a ficha do funcionário', () => {
       'Bruna Costa — bruna@example.com',
       'Ligar e desligar a conta é feito na lista de pessoas, pelo super admin: a ficha ligada é o que libera o ponto para a conta.',
       'Passou a bater ponto aqui em',
-      A_DATA_E_REGISTRO,
+      A_DATA_DECIDE_O_SALDO,
+      ...A_ESCOLHA_DA_JORNADA,
+      'A jornada da empresa, hoje:',
+      ...A_SEMENTE_PARA_LER,
+      'Se a jornada da empresa mudar, esta pessoa acompanha.',
       'Cancelar',
       'Salvar a ficha',
     ])
+    expect(html).not.toMatch(/só registro|não entra na folha|não muda nada no ponto/)
+  })
+
+  it('a própria ficha diz por que a jornada e a data são só para ler', () => {
+    const html = desenhar(
+      createElement(FormularioDaFicha, {
+        ficha: { ...FICHA_DA_BRUNA, batePontoDesde: '2026-09-08', jornada: [{ dia: 2, inicio: '09:00', fim: '15:00' }] },
+        rotuloDaConta: 'Bruna Costa, bruna@example.com',
+        jornadaDaEmpresa: JORNADA_SEMENTE,
+        propria: true,
+        gravando: false,
+        erro: null,
+        aoSalvar: nada,
+        aoFechar: nada,
+      }),
+    )
+    expect(trechos(html)).toEqual([
+      'Editar ficha',
+      'Bruna Costa',
+      O_QUE_SAI_NA_FOLHA,
+      ...CAMPOS_DA_FICHA,
+      'Conta para bater ponto',
+      'Bruna Costa, bruna@example.com',
+      'Ligar e desligar a conta é feito na lista de pessoas, pelo super admin: a ficha ligada é o que libera o ponto para a conta.',
+      POR_QUE_A_PROPRIA_FICHA_E_SO_PARA_LER,
+      'Passou a bater ponto aqui em',
+      A_DATA_DECIDE_O_SALDO,
+      ...A_ESCOLHA_DA_JORNADA,
+      'A jornada própria desta pessoa:',
+      'Segunda',
+      'sem jornada',
+      'Terça',
+      '09:00-15:00',
+      '· 6h00',
+      ...['Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'].flatMap((dia) => [dia, 'sem jornada']),
+      'Vale no lugar da jornada da empresa em todos os dias.',
+      'Cancelar',
+      'Salvar a ficha',
+    ])
+    expect(POR_QUE_A_PROPRIA_FICHA_E_SO_PARA_LER).toBe(
+      'Esta ficha é a sua. Quem é dono da ficha não muda a própria jornada nem a data em que passou a bater ponto aqui, porque as duas decidem o saldo de horas: outra pessoa que administra o ponto faz isso. Os outros campos se editam como em qualquer ficha.',
+    )
   })
 
   it('sem conta, diz que a ficha fica guardada e que a batida e a folha são da conta', () => {
@@ -380,7 +444,12 @@ describe('a ficha do funcionário', () => {
       'Sem conta — não bate ponto pelo celular',
       'Sem conta, a ficha fica guardada, mas ainda não há batida nem folha: as duas são da conta. O super admin liga a ficha a uma conta na lista de pessoas.',
       'Passou a bater ponto aqui em',
-      A_DATA_E_REGISTRO,
+      A_DATA_DECIDE_O_SALDO,
+      ...A_ESCOLHA_DA_JORNADA,
+      'A jornada da empresa, hoje:',
+      // Sem a configuração (não carregou), a ficha diz e grava do mesmo jeito.
+      'Não deu para mostrar a jornada da empresa agora. A ficha grava do mesmo jeito.',
+      'Se a jornada da empresa mudar, esta pessoa acompanha.',
       'Cancelar',
       'Criar a ficha',
     ])
