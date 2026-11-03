@@ -1,11 +1,11 @@
 import { ehAtiva, type Ausencia } from './ausencias'
 import {
   camposFaltandoDaEmpresa,
-  escreverDuracao,
   type ConfiguracaoDoPonto,
   type LocalDoPonto,
 } from './configuracao'
 import { formatarMomento } from './formato'
+import { formatarDuracao } from './horas'
 import type { resumirPessoas } from './pessoas'
 
 /*
@@ -64,7 +64,7 @@ export type TomDaSecao = 'aviso' | 'neutro' | 'bom'
 export interface SecaoDoInicio {
   chave: ChaveDaSecao
   titulo: string
-  /** O contador: "3", "150 m", "08:00"; "…" carregando, "—" sem leitura. */
+  /** O contador: "3", "150 m", "8h00"; reticências carregando, o traço longo sem leitura. */
   numero: string
   /** O que o número conta, em minúsculas, logo abaixo dele. */
   legenda: string
@@ -220,7 +220,7 @@ function secaoDeAusencias(ausencias: Contagem<ContagemDeAusencias>, rotuloDoMes:
     detalhe:
       n === 0
         ? 'Nenhuma ausência lançada no mês.'
-        : `${contar(pessoas, 'pessoa', 'pessoas')}. Não mudam a soma de horas: aparecem no espelho, na folha e no CSV.`,
+        : `${contar(pessoas, 'pessoa', 'pessoas')}. Atestado e falta justificada abonam a parte da jornada que cobrem; outro motivo só marca o dia.`,
     tom: 'neutro',
   }
 }
@@ -334,7 +334,8 @@ function secaoDaJornada(configuracao: EntradaDoInicio['configuracao']): SecaoDoI
   }
   return {
     ...base,
-    numero: escreverDuracao(regras.cargaDiariaMinutos),
+    // A duração como as outras telas a escrevem ("8h00"): "08:00" pareceria um horário.
+    numero: formatarDuracao(regras.cargaDiariaMinutos),
     legenda,
     detalhe: `Tolerância de ${regras.toleranciaMinutos} min · batida repetida recusada em ${regras.janelaDuplicidadeSegundos} s.`,
     tom: 'neutro',

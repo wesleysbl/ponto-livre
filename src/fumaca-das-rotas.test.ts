@@ -1134,11 +1134,14 @@ describe('a página inicial da administração', () => {
     // pendência de acesso nem de PIN.
     expect(texto).toMatch(/Pessoas5pessoas1 conta sem acesso · 1 ficha sem conta/)
     expect(texto).toMatch(/1ausência em /)
+    expect(texto).toContain('Atestado e falta justificada abonam a parte da jornada que cobrem; outro motivo só marca o dia.')
+    expect(texto).not.toContain('Não mudam a soma de horas')
     expect(texto).toContain('150 mde raio')
     expect(texto).toContain('sem medição no local')
     expect(texto).toContain('1campo faltando na folha')
     expect(texto).toContain('Falta CNPJ.')
-    expect(texto).toContain('08:00de carga diária')
+    expect(texto).toContain('8h00de carga diária')
+    expect(texto).not.toContain('08:00de carga diária')
     conferirFumaca(tela)
   })
 

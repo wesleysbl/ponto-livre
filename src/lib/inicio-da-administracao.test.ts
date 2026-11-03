@@ -215,7 +215,10 @@ describe('ausências', () => {
       'ausencias',
     )
     expect(uma.legenda).toBe('ausência em outubro de 2026')
-    expect(uma.detalhe).toMatch(/^1 pessoa\. Não mudam a soma de horas/)
+    expect(uma.detalhe).toBe(
+      '1 pessoa. Atestado e falta justificada abonam a parte da jornada que cobrem; outro motivo só marca o dia.',
+    )
+    expect(uma.detalhe).not.toContain('Não mudam a soma de horas')
   })
 })
 
@@ -297,9 +300,11 @@ describe('local, empresa e jornada', () => {
     expect(semLinha).toMatchObject({ numero: '6', tom: 'aviso' })
   })
 
-  it('jornada: carga em horas:minutos, tolerância e janela', () => {
+  it('jornada: carga escrita como duração, tolerância e janela', () => {
+    // "8h00", como as outras telas escrevem a duração; "08:00" pareceria um horário.
     expect(secao(montarInicioDaAdministracao(entrada()), 'jornada')).toMatchObject({
-      numero: '08:00',
+      numero: '8h00',
+      legenda: 'de carga diária',
       detalhe: 'Tolerância de 10 min · batida repetida recusada em 60 s.',
     })
     expect(
