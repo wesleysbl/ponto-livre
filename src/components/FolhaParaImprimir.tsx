@@ -380,8 +380,11 @@ export function FolhaParaImprimir({
                 <td className={`${celula} text-right font-mono whitespace-nowrap tabular-nums`}>
                   {saldo.previsto}
                 </td>
+                {/* A soma da coluna inteira, os dias antes do primeiro dia cobrado
+                    inclusive: é o abono do "Total com abono" do alto, e não o
+                    abonado do resumo, que soma só os dias cobrados. */}
                 <td className={`${celula} text-right font-mono whitespace-nowrap tabular-nums`}>
-                  {saldo.abonado}
+                  {saldo.abonadoDaColuna}
                 </td>
                 <td className={`${celula} text-right font-mono whitespace-nowrap tabular-nums`}>
                   {saldo.saldo}

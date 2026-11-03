@@ -36,11 +36,14 @@
  * O TOTAL COM ABONO. As telas somam o abonado no total do dia e do mês ("7h46
  * trabalhadas + 0h59 de atestado"), e o papel não pode dizer outro número: com
  * abono no mês, o alto da folha mostra o "Total com abono" e a conta dele
- * (`abono`). A coluna do trabalhado e o "Total do mês" da tabela continuam
- * sendo só as batidas. O abono vale até sem dia cobrado (a mesma regra de
- * `saldo.ts`); aí, sem a coluna do abonado, cada dia que abonou ganha a marca
- * "Abonado 0h59". O feriado nacional ganha a marca "Feriado: Nossa Senhora
- * Aparecida" no lugar de "Dia sem jornada".
+ * (`abono`). A coluna do trabalhado e o total dela no "Total do mês" da tabela
+ * continuam sendo só as batidas. A coluna do abonado mostra, dia a dia, esse
+ * mesmo abono, e o total dela é a soma da coluna inteira (`abonadoDaColuna`),
+ * os dias antes do primeiro dia cobrado inclusive: num papel assinado, a coluna
+ * e o total dela não podem discordar. O abono vale até sem dia cobrado (a
+ * mesma regra de `saldo.ts`); aí, sem a coluna do abonado, cada dia que abonou
+ * ganha a marca "Abonado 0h59". O feriado nacional ganha a marca "Feriado:
+ * Nossa Senhora Aparecida" no lugar de "Dia sem jornada".
  *
  * O RESUMO DO MÊS. Quem fecha o mês olha o fim da folha: quanto a pessoa fez a
  * mais e quanto ficou devendo. São o crédito e o débito do resumo de
@@ -187,7 +190,8 @@ export interface LinhaDaFolha {
  * As três colunas do saldo de um dia, já escritas. Célula vazia (`''`) quando
  * o dia não tem o que dizer nela: fora da cobrança, a do previsto e a do saldo;
  * abonado zero, a do abonado (o buraco na coluna é a informação, como na
- * batida que faltou).
+ * batida que faltou). No dia incompleto, a do abonado também: ele fica fora do
+ * total, como o trabalhado dele.
  */
 export interface SaldoDaLinha {
   estado: EstadoDoDia
@@ -204,7 +208,13 @@ export interface SaldoDaFolha {
   resumo: ResumoDoSaldo
   saldo: string
   previsto: string
-  abonado: string
+  /**
+   * O "Total do mês" da coluna Abonado: a soma das células dela, que é o abono
+   * do "Total com abono" do alto (`abonadoNoTotal`), ou `0h00`. Não é o
+   * `resumo.abonado`, que soma só os dias de cobrança: com o saldo começando no
+   * meio do mês, o atestado de antes aparece na coluna e fica fora do resumo.
+   */
+  abonadoDaColuna: string
   /**
    * A soma do saldo positivo dos dias (o crédito do resumo): `+5h00`, ou
    * `0h00` sem nenhuma. Sai sempre, para ninguém precisar somar nada.
@@ -385,15 +395,21 @@ const MARCA_SEM_JORNADA = 'Dia sem jornada'
  * as mesmas de `LinhaDoSaldo` (`components/SaldoDoDia.tsx`). Hoje e o dia
  * pendente NUNCA mostram o `saldoBruto`: às 10h ele é −7h00, e isso não é
  * débito de ninguém.
+ *
+ * O ABONADO DA CÉLULA É O QUE SOMA NO TOTAL (`abonadoNoTotal`, a mesma conta do
+ * "Total com abono"): em branco no dia incompleto, passado ou de hoje, como no
+ * total do dia da tela (`TotalDoDia`). Sem isso, um atestado no dia em que
+ * faltou a saída apareceria na coluna e sumiria do total dela.
  */
 function escreverSaldoDoDia(saldo: SaldoDoDia): SaldoDaLinha {
+  const minutosAbonados = abonadoNoTotal([saldo])
+  const abonado = minutosAbonados > 0 ? formatarDuracao(minutosAbonados) : ''
   // Fora da cobrança, só o abonado: ele soma no total com abono do alto da folha.
-  if (saldo.estado === 'fora')
-    return { estado: saldo.estado, previsto: '', abonado: saldo.abonado > 0 ? formatarDuracao(saldo.abonado) : '', saldo: '' }
+  if (saldo.estado === 'fora') return { estado: saldo.estado, previsto: '', abonado, saldo: '' }
   return {
     estado: saldo.estado,
     previsto: formatarDuracao(saldo.semJornada ? 0 : saldo.previsto),
-    abonado: saldo.abonado > 0 ? formatarDuracao(saldo.abonado) : '',
+    abonado,
     saldo:
       saldo.estado === 'em_andamento'
         ? 'em andamento'
@@ -426,9 +442,13 @@ function plural(quantidade: number, um: string, varios: string): string {
   return `${quantidade} ${quantidade === 1 ? um : varios}`
 }
 
-/** O resumo do mês, com as palavras de `ResumoDoSaldoNaTela`. */
+/**
+ * O resumo do mês, com as palavras de `ResumoDoSaldoNaTela`. `abonadoNoMes` é o
+ * abono do "Total com abono" (`abonadoNoTotal`), que é o total da coluna.
+ */
 function escreverSaldoDoMes(
   resumo: ResumoDoSaldo,
+  abonadoNoMes: number,
   comHoje: boolean,
   aPartirDe: string | null,
   toleranciaMinutos: number,
@@ -438,7 +458,7 @@ function escreverSaldoDoMes(
     resumo,
     saldo: formatarSaldo(resumo.saldo),
     previsto: formatarDuracao(resumo.previsto),
-    abonado: formatarDuracao(resumo.abonado),
+    abonadoDaColuna: formatarDuracao(abonadoNoMes),
     extras: formatarSaldo(resumo.credito),
     negativas: formatarSaldo(-resumo.debito),
     faltas: resumo.faltas > 0 ? plural(resumo.faltas, 'dia', 'dias') : 'nenhuma',
@@ -680,6 +700,7 @@ export function montarFolha(entrada: EntradaDaFolha): FolhaDePonto {
       saldoDoMes && entrada.regras
         ? escreverSaldoDoMes(
             saldoDoMes.resumo,
+            abonadoNoMes,
             saldoDoMes.dias.some((saldo) => saldo.estado === 'em_andamento'),
             cobranca?.caso === 'no_meio' ? cobranca.desde : null,
             entrada.regras.toleranciaMinutos,

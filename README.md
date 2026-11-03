@@ -167,7 +167,7 @@ Cada decisão, com o porquê e o que se troca por ela: [`docs/DEFESA.md`](docs/D
 ## Testes
 
 ```bash
-npm test          # 1863 testes, 59 arquivos
+npm test          # 1868 testes, 59 arquivos
 npm run db:testar # as regras do banco, no Supabase local (precisa do Docker)
 npm run e2e       # de ponta a ponta no Chrome, contra o Supabase local
 ```
