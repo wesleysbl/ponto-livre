@@ -410,7 +410,9 @@ test.describe('o ponto, no celular de quem bate', () => {
       await expect(entrada).toBeVisible()
       await expect(entrada).toContainText('Entrada')
       await expect(page.getByText('Em andamento', { exact: true })).toBeVisible()
-      await print(page, '19-ana-espelho-do-mes')
+      // A página inteira: com o resumo do saldo, a nota do pé não cabe mais na
+      // janela do celular, e o print cortaria o parágrafo no meio.
+      await print(page, '19-ana-espelho-do-mes', { inteira: true })
     })
 
     await test.step('no banco: uma batida, no local, com selfie guardada', async () => {
