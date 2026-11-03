@@ -1,13 +1,15 @@
 import { supabase } from './supabase'
 import { lerTodasAsPaginas } from './paginacao'
 import type { LocalizacaoDaBatida } from './coordenada'
-import type {
-  ConfiguracaoDoPonto,
-  DadosDaEmpresa,
-  DadosDoLocal,
-  LocalDoPonto,
-  RegrasDeJornada,
+import {
+  lerSaldoAPartirDe,
+  type ConfiguracaoDoPonto,
+  type DadosDaEmpresa,
+  type DadosDoLocal,
+  type LocalDoPonto,
+  type RegrasDeJornada,
 } from './configuracao'
+import { lerJornada, lerJornadaPropria } from './jornada'
 import type { ConcessaoDeAdministracao, EstadoDoPin } from './pessoas'
 import type { DadosDaFicha, FichaDoFuncionario } from './cadastro'
 import { lerRespostaDoAcesso, type AcessoAoPonto } from './acesso'
@@ -85,7 +87,7 @@ import {
 
 /** Colunas explícitas em UMA linha: o supabase-js tipa a partir do literal. */
 const COLUNAS_DA_CONFIGURACAO =
-  'id, razao_social, nome_fantasia, cnpj, endereco, cidade, uf, carga_diaria_minutos, tolerancia_minutos, janela_duplicidade_segundos, atualizado_em'
+  'id, razao_social, nome_fantasia, cnpj, endereco, cidade, uf, carga_diaria_minutos, jornada, saldo_a_partir_de, tolerancia_minutos, janela_duplicidade_segundos, atualizado_em'
 
 const COLUNAS_DO_LOCAL = 'id, nome, latitude, longitude, raio_metros, ativo, medido_em, medido_por'
 
@@ -289,6 +291,10 @@ interface LinhaDaConfiguracao {
   cidade: string | null
   uf: string | null
   carga_diaria_minutos: number
+  /** jsonb: chega como veio do banco e passa por `lerJornada`. */
+  jornada: unknown
+  /** `date`: passa por `lerSaldoAPartirDe`. */
+  saldo_a_partir_de: unknown
   tolerancia_minutos: number
   janela_duplicidade_segundos: number
   atualizado_em: string | null
@@ -303,6 +309,11 @@ function daLinha(linha: LinhaDaConfiguracao): ConfiguracaoDoPonto {
     cidade: linha.cidade,
     uf: linha.uf,
     cargaDiariaMinutos: linha.carga_diaria_minutos,
+    // O banco não deixa existir jornada torta nem configuração sem a data do
+    // saldo (CHECK, gatilho e NOT NULL). Se chegar uma, a leitura falha com a
+    // frase do problema em vez de calcular o saldo em cima dela.
+    jornada: lerJornada(linha.jornada),
+    saldoAPartirDe: lerSaldoAPartirDe(linha.saldo_a_partir_de),
     toleranciaMinutos: linha.tolerancia_minutos,
     janelaDuplicidadeSegundos: linha.janela_duplicidade_segundos,
     atualizadoEm: linha.atualizado_em,
@@ -696,7 +707,7 @@ export async function lerSuperAdmins(): Promise<string[]> {
  * retorno mudar sozinho no dia em que a tabela ganhar coluna.
  */
 const COLUNAS_DA_FICHA =
-  'id, usuario_id, nome_completo, cpf, matricula, cargo, admissao, desligamento, ctps, ctps_serie, centro_custo, ativo, bate_ponto_desde, atualizado_em'
+  'id, usuario_id, nome_completo, cpf, matricula, cargo, admissao, desligamento, ctps, ctps_serie, centro_custo, ativo, bate_ponto_desde, jornada, atualizado_em'
 
 interface LinhaDaFicha {
   id: string
@@ -712,6 +723,8 @@ interface LinhaDaFicha {
   centro_custo: string | null
   ativo: boolean
   bate_ponto_desde: string | null
+  /** jsonb ou nulo (segue a da empresa); passa por `lerJornadaPropria`. */
+  jornada: unknown
   atualizado_em: string | null
 }
 
@@ -730,6 +743,7 @@ function daFicha(linha: LinhaDaFicha): FichaDoFuncionario {
     centroCusto: linha.centro_custo,
     ativo: linha.ativo === true,
     batePontoDesde: linha.bate_ponto_desde,
+    jornada: lerJornadaPropria(linha.jornada),
     atualizadoEm: linha.atualizado_em,
   }
 }

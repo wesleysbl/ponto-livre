@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ConfiguracaoDoPonto, LocalDoPonto } from './configuracao'
+import { JORNADA_SEMENTE } from './jornada'
 import {
   contarAusenciasAtivas,
   ID_DA_SECAO,
@@ -32,6 +33,8 @@ const CONFIGURACAO: ConfiguracaoDoPonto = {
   cidade: 'Campinas',
   uf: 'SP',
   cargaDiariaMinutos: 480,
+  jornada: JORNADA_SEMENTE,
+  saldoAPartirDe: '2026-10-01',
   toleranciaMinutos: 10,
   janelaDuplicidadeSegundos: 60,
   atualizadoEm: null,

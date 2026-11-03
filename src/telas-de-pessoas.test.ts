@@ -150,6 +150,7 @@ function ficha(id: string, nomeCompleto: string, extras: Partial<FichaDoFunciona
     centroCusto: null,
     ativo: true,
     batePontoDesde: null,
+    jornada: null,
     atualizadoEm: null,
     ...extras,
   }

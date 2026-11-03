@@ -490,6 +490,9 @@ function bancoComDados(): Record<string, Linha[]> {
         dia_inicio: `${mes}-01`,
         dia_fim: `${mes}-01`,
         tipo: 'atestado_medico',
+        modalidade: 'dias',
+        hora_inicio: null,
+        hora_fim: null,
         observacao: null,
         atestado_path: `${ANA.id}/au1.pdf`,
         lancado_por: ADMIN.id,
@@ -514,6 +517,7 @@ function bancoComDados(): Record<string, Linha[]> {
         centro_custo: null,
         ativo: true,
         bate_ponto_desde: '2026-09-04',
+        jornada: null,
         atualizado_em: agora,
       },
       {
@@ -530,6 +534,7 @@ function bancoComDados(): Record<string, Linha[]> {
         centro_custo: null,
         ativo: true,
         bate_ponto_desde: null,
+        jornada: null,
         atualizado_em: agora,
       },
     ],
@@ -559,6 +564,12 @@ function bancoComDados(): Record<string, Linha[]> {
         cidade: 'Campinas',
         uf: 'SP',
         carga_diaria_minutos: 480,
+        // A semente do banco, na ordem em que o gatilho a grava.
+        jornada: [1, 2, 3, 4, 5].flatMap((dia) => [
+          { dia, inicio: '08:00', fim: '12:00' },
+          { dia, inicio: '13:00', fim: '17:00' },
+        ]),
+        saldo_a_partir_de: `${mes}-01`,
         tolerancia_minutos: 10,
         janela_duplicidade_segundos: 60,
         atualizado_em: agora,

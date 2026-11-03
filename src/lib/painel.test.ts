@@ -110,6 +110,7 @@ function ficha(id: string, usuarioId: string | null, nomeCompleto: string, extra
     centroCusto: null,
     ativo: true,
     batePontoDesde: null,
+    jornada: null,
     atualizadoEm: null,
     ...extras,
   }

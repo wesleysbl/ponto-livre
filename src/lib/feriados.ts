@@ -20,8 +20,10 @@
  * O Dia Nacional de Zumbi e da Consciência Negra (20/11) é feriado nacional
  * desde a Lei 14.759/2023: vale de 2024 em diante.
  *
- * A CONTA NÃO MUDA. A etiqueta só marca o dia; o total de horas continua
- * saindo das batidas, como no sábado e no domingo.
+ * NO SALDO, O FERIADO É DIA SEM JORNADA, como o sábado e o domingo
+ * (`saldo.ts`): nada de previsto nem de falta, e o que se trabalhar nele é
+ * crédito. O trabalhado continua saindo das batidas. O feriado da cidade, que
+ * não está aqui, é lançado como falta justificada por dias.
  *
  * SEM RELÓGIO E SEM FUSO. Um dia civil (`AAAA-MM-DD`) não tem fuso, e a conta
  * da Páscoa é aritmética de calendário: o mesmo resultado em qualquer aparelho.
@@ -104,7 +106,8 @@ export function feriadosNacionais(ano: number): Feriado[] {
 /**
  * O nome do feriado nacional do dia, ou `null` se o dia não é feriado (ou não
  * é uma data válida). É a função que a lista de dias da tela usa
- * (`listarDiasDoPeriodo`, em `corrigir.ts`).
+ * (`listarDiasDoPeriodo`, em `corrigir.ts`) e a que o saldo usa quando quem
+ * chama não passa outra lista (`RegrasDoSaldo.feriadoDoDia`).
  */
 export function feriadoNacional(dia: string): string | null {
   if (!ehDiaValido(dia)) return null

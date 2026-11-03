@@ -100,6 +100,8 @@ const {
   lerSuperAdmins,
   pedirAcaoDeConta,
   salvarFicha,
+  lerConfiguracao,
+  lerFichas,
   lerLocalAtivo,
   salvarLocal,
   lerLocalizacoesRecentes,
@@ -126,6 +128,7 @@ const LINHA_DA_FICHA = {
   centro_custo: null,
   ativo: true,
   bate_ponto_desde: null,
+  jornada: null,
   atualizado_em: null,
 }
 
@@ -540,5 +543,93 @@ describe('o local do ponto', () => {
     expect(tabela).toMatch(/\n {2}medido_em timestamp with time zone,/)
     // O gatilho repõe as duas colunas: mandar do cliente seria ignorado.
     expect(migration).toMatch(/NEW\.medido_por := auth\.uid\(\)/)
+  })
+})
+
+describe('a jornada e a data do saldo nas leituras', () => {
+  /** A linha da configuração como o PostgREST a devolve, com a jornada fora de ordem. */
+  const LINHA_DA_CONFIGURACAO = {
+    id: 1,
+    razao_social: 'Empresa Exemplo Ltda',
+    nome_fantasia: 'Empresa Exemplo',
+    cnpj: null,
+    endereco: null,
+    cidade: 'Campinas',
+    uf: 'SP',
+    carga_diaria_minutos: 360,
+    jornada: [
+      { dia: 2, inicio: '09:00', fim: '15:00' },
+      { dia: 1, inicio: '09:00', fim: '15:00' },
+    ],
+    saldo_a_partir_de: '2026-11-03',
+    tolerancia_minutos: 10,
+    janela_duplicidade_segundos: 60,
+    atualizado_em: null,
+  }
+
+  it('a configuração lê a jornada da empresa, em ordem, e a "Saldo calculado a partir de"', async () => {
+    estado.respostaDaTabela = () => ({ data: LINHA_DA_CONFIGURACAO, error: null })
+    const configuracao = await lerConfiguracao()
+    expect(String(argsDe('select')?.[0])).toMatch(/\bjornada\b/)
+    expect(String(argsDe('select')?.[0])).toMatch(/\bsaldo_a_partir_de\b/)
+    expect(configuracao).toMatchObject({
+      jornada: [
+        { dia: 1, inicio: '09:00', fim: '15:00' },
+        { dia: 2, inicio: '09:00', fim: '15:00' },
+      ],
+      saldoAPartirDe: '2026-11-03',
+      cargaDiariaMinutos: 360,
+    })
+  })
+
+  it('jornada torta ou configuração sem a data falham na leitura, em vez de virar saldo', async () => {
+    estado.respostaDaTabela = () => ({ data: { ...LINHA_DA_CONFIGURACAO, jornada: [] }, error: null })
+    await expect(lerConfiguracao()).rejects.toThrow(/Jornada inválida: nenhum bloco/)
+    estado.respostaDaTabela = () => ({ data: { ...LINHA_DA_CONFIGURACAO, saldo_a_partir_de: null }, error: null })
+    await expect(lerConfiguracao()).rejects.toThrow(/Saldo calculado a partir de/)
+  })
+
+  it('a ficha lê a jornada própria: nula segue a da empresa, a lista vem em ordem', async () => {
+    estado.respostaDaTabela = () => ({
+      data: [
+        LINHA_DA_FICHA,
+        {
+          ...LINHA_DA_FICHA,
+          id: 'f2',
+          jornada: [
+            { dia: 3, inicio: '13:00', fim: '17:00' },
+            { dia: 3, inicio: '08:00', fim: '12:00' },
+          ],
+        },
+      ],
+      error: null,
+    })
+    const [semPropria, comPropria] = await lerFichas()
+    expect(String(argsDe('select')?.[0])).toMatch(/\bjornada\b/)
+    expect(semPropria.jornada).toBeNull()
+    expect(comPropria.jornada).toEqual([
+      { dia: 3, inicio: '08:00', fim: '12:00' },
+      { dia: 3, inicio: '13:00', fim: '17:00' },
+    ])
+  })
+
+  it('gravar a ficha não manda a jornada própria: o formulário não a edita, e a do banco fica', async () => {
+    estado.respostaDaTabela = () => ({ data: LINHA_DA_FICHA, error: null })
+    await salvarFicha('f1', {
+      usuarioId: CONTA,
+      nomeCompleto: 'Ana Lima',
+      cpf: null,
+      matricula: null,
+      cargo: 'Vendas',
+      admissao: null,
+      desligamento: null,
+      ctps: null,
+      ctpsSerie: null,
+      centroCusto: null,
+      batePontoDesde: '2026-10-01',
+    })
+    const valores = argsDe('update')?.[0] as Record<string, unknown>
+    expect(valores).not.toHaveProperty('jornada')
+    expect(valores).toMatchObject({ cargo: 'Vendas', bate_ponto_desde: '2026-10-01' })
   })
 })

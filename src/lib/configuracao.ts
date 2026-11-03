@@ -22,6 +22,8 @@
  * banco não aceita", que é uma mentira difícil de descobrir — o operador
  * acredita e desiste, sem nunca ver o erro real.
  */
+import { ehDiaValido } from './horas'
+import type { Jornada } from './jornada'
 
 /* ------------------------------------------------------------------ */
 /* Tipos                                                               */
@@ -41,9 +43,10 @@ export interface DadosDaEmpresa {
 /**
  * As regras de jornada, gravadas pela área de administração.
  *
- * SÓ A JANELA MUDA O QUE ACONTECE: o banco a lê a cada batida. A carga diária e
- * a tolerância ficam guardadas e aparecem na administração, mas nenhuma conta
- * do app as usa — não há saldo, atraso nem hora extra calculados.
+ * A janela vale na batida: o banco a lê a cada uma. A tolerância entra no
+ * saldo do dia (`saldo.ts`). A carga diária é calculada pelo banco a partir da
+ * jornada da empresa (o maior total de um dia), e o saldo não a usa: usa os
+ * blocos de cada dia.
  */
 export interface RegrasDeJornada {
   cargaDiariaMinutos: number
@@ -53,6 +56,14 @@ export interface RegrasDeJornada {
 }
 
 export interface ConfiguracaoDoPonto extends DadosDaEmpresa, RegrasDeJornada {
+  /** A jornada da EMPRESA (`ponto_configuracao.jornada`), conferida por `lerJornada`. */
+  jornada: Jornada
+  /**
+   * "Saldo calculado a partir de" (`ponto_configuracao.saldo_a_partir_de`,
+   * `AAAA-MM-DD`): antes deste dia, nenhum dia de ninguém é cobrado. Quem a
+   * combina com a data da ficha é `regrasDoSaldo`, em `saldo.ts`.
+   */
+  saldoAPartirDe: string
   /** ISO 8601 da última gravação. É o que a tela mostra quando duas abas brigam. */
   atualizadoEm: string | null
 }
@@ -459,4 +470,23 @@ export function segundosDaMensagemDeDuplicidade(mensagem: string): number | null
   if (!achado) return null
   const segundos = Number(achado[1])
   return Number.isFinite(segundos) ? segundos : null
+}
+
+/* ------------------------------------------------------------------ */
+/* A data do saldo, como o banco a devolve                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `saldo_a_partir_de` como chega do banco: um `date` (`AAAA-MM-DD`), sempre
+ * preenchido (a coluna é obrigatória).
+ *
+ * LEVANTA quando a data não vem ou não é um dia, como `lerJornada` faz com a
+ * jornada torta: o banco não deixa uma dessas existir, e cobrar o saldo a
+ * partir de uma data inventada acusaria falta onde não há.
+ */
+export function lerSaldoAPartirDe(valor: unknown): string {
+  if (typeof valor === 'string' && ehDiaValido(valor)) return valor
+  throw new Error(
+    'A configuração do ponto veio sem a data "Saldo calculado a partir de". Confira se as migrations do banco foram aplicadas.',
+  )
 }

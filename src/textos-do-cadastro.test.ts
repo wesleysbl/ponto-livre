@@ -246,6 +246,7 @@ const FICHA_DA_BRUNA: FichaDoFuncionario = {
   centroCusto: null,
   ativo: true,
   batePontoDesde: null,
+  jornada: null,
   atualizadoEm: null,
 }
 

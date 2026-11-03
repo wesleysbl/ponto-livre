@@ -119,6 +119,7 @@ function ficha(id: string, extras: Partial<FichaDoFuncionario> = {}): FichaDoFun
     centroCusto: null,
     ativo: true,
     batePontoDesde: null,
+    jornada: null,
     atualizadoEm: null,
     ...extras,
   }

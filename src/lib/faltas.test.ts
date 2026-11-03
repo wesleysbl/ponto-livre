@@ -273,6 +273,13 @@ describe('ler as ausências', () => {
     }
     expect(operacoes().some((op) => op.metodo === 'eq')).toBe(false)
   })
+
+  it('pede a modalidade e as horas: o saldo abona o intervalo da ausência por horário', async () => {
+    estado.respostaDaTabela = () => ({ data: [], error: null })
+    await lerAusenciasDoPeriodo({ inicio: '2026-10-01', fim: '2026-10-31' })
+    const colunas = String(operacao('select')?.args[0]).split(',').map((coluna) => coluna.trim())
+    expect(colunas).toEqual(expect.arrayContaining(['modalidade', 'hora_inicio', 'hora_fim']))
+  })
 })
 
 describe('o link do atestado', () => {

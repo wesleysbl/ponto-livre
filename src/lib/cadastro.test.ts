@@ -64,6 +64,7 @@ function ficha(mudancas: Partial<FichaDoFuncionario> = {}): FichaDoFuncionario {
     centroCusto: null,
     ativo: true,
     batePontoDesde: null,
+    jornada: null,
     atualizadoEm: null,
     ...mudancas,
   }

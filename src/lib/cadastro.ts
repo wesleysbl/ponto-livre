@@ -41,6 +41,7 @@
  */
 import { type Leitura } from './configuracao'
 import { ehDiaValido } from './horas'
+import type { Jornada } from './jornada'
 
 /* ------------------------------------------------------------------ */
 /* Tipos                                                               */
@@ -79,14 +80,20 @@ export interface FichaDoFuncionario {
    * A data em que esta pessoa passou a bater ponto NESTE sistema. NULO = a
    * data ainda não foi preenchida.
    *
-   * ⚠ É REGISTRO, NÃO REGRA. Hoje o app guarda a data e a mostra na lista de
-   * pessoas ("bate ponto aqui desde …", ou o aviso de que ela falta), e nada
-   * mais a lê. Ela não libera nem bloqueia a batida — quem libera é a ficha
-   * ativa ligada à conta, com ou sem a data —, e a folha, o espelho, o painel
-   * e o CSV não a usam: nenhum deles acusa falta em dia sem batida. Uma tela
-   * que diga o contrário promete o que o app não faz.
+   * ⚠ ELA DECIDE O SALDO, E NÃO A BATIDA. O saldo da pessoa começa na mais
+   * nova entre esta data e a "Saldo calculado a partir de" da configuração
+   * (`regrasDoSaldo`, em `saldo.ts`); antes disso, nenhum dia gera falta nem
+   * saldo, e sem esta data nenhum dia da pessoa é cobrado. Ela não libera nem
+   * bloqueia a batida: quem libera é a ficha ativa ligada à conta, com ou sem
+   * a data. Por decidir o saldo, o banco recusa que o dono da ficha a grave.
    */
   batePontoDesde: string | null
+  /**
+   * A jornada PRÓPRIA da pessoa (`ponto_funcionarios.jornada`), lida por
+   * `lerJornadaPropria`. NULA = segue a jornada da empresa, que é o caso comum.
+   * Quando existe, vale no lugar da da empresa em todos os dias.
+   */
+  jornada: Jornada | null
   /** ISO 8601 da última gravação. É o que a tela mostra quando duas abas brigam. */
   atualizadoEm: string | null
 }
@@ -97,8 +104,13 @@ export interface FichaDoFuncionario {
  * `ativo` NÃO ESTÁ AQUI de propósito: desativar é uma ação com confirmação
  * própria, e não um campo que se desmarca sem querer no meio de uma edição de
  * cargo. Quem a muda é `definirAtivoDaFicha`, em `administracao.ts`.
+ *
+ * `jornada` TAMBÉM NÃO ESTÁ AQUI: o formulário da ficha não a edita, e ela só
+ * vai ao banco por quem a edita. Mandá-la junto com o cargo gravaria de novo
+ * o que a tela leu, e uma gravação com a leitura velha apagaria a jornada que
+ * outra aba acabou de mudar.
  */
-export type DadosDaFicha = Omit<FichaDoFuncionario, 'id' | 'ativo' | 'atualizadoEm'>
+export type DadosDaFicha = Omit<FichaDoFuncionario, 'id' | 'ativo' | 'atualizadoEm' | 'jornada'>
 
 /** O que o formulário da ficha entrega: tudo texto, como sai de um `<input>`. */
 export interface RascunhoDaFicha {

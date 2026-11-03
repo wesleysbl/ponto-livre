@@ -9,6 +9,7 @@ import {
   lerDuracao,
   lerInteiro,
   lerNumero,
+  lerSaldoAPartirDe,
   segundosDaMensagemDeDuplicidade,
   somenteDigitosDeCnpj,
   validarEmpresa,
@@ -404,5 +405,17 @@ describe('segundosDaMensagemDeDuplicidade', () => {
   it('devolve nulo quando a forma da mensagem mudou — nunca NaN na tela', () => {
     expect(segundosDaMensagemDeDuplicidade('Batida duplicada')).toBeNull()
     expect(segundosDaMensagemDeDuplicidade('outro erro qualquer')).toBeNull()
+  })
+})
+
+describe('lerSaldoAPartirDe: a data do saldo como o banco a devolve', () => {
+  it('o dia do banco passa como veio', () => {
+    expect(lerSaldoAPartirDe('2026-11-03')).toBe('2026-11-03')
+  })
+
+  it('sem a data, ou com o que não é dia, a leitura falha em vez de cobrar desde uma data inventada', () => {
+    for (const torto of [null, undefined, '', '2026-02-30', '03/11/2026', 20261103]) {
+      expect(() => lerSaldoAPartirDe(torto)).toThrow(/Saldo calculado a partir de/)
+    }
   })
 })

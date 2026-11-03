@@ -25,7 +25,9 @@ import type { Periodo } from './periodo'
  *                            ponto, lê as próprias
  *   INSERT ponto_ausencias   só admin, e só as colunas
  *                            id, usuario_id, dia_inicio, dia_fim, tipo,
- *                            observacao, atestado_path (privilégio por coluna)
+ *                            modalidade, hora_inicio, hora_fim, observacao,
+ *                            atestado_path (privilégio por coluna; quem não
+ *                            manda a modalidade lança por dias)
  *   UPDATE ponto_ausencias   só admin, e só `motivo_cancelamento`
  *   DELETE                   ninguém (nem policy, nem privilégio, e um gatilho
  *                            recusa para todo papel)
@@ -41,9 +43,13 @@ import type { Periodo } from './periodo'
  * daqui: autor escrito pelo cliente é autor que o cliente pode inventar.
  */
 
-/** Colunas explícitas, numa linha só (senão o supabase-js perde a tipagem). */
+/**
+ * Colunas explícitas, numa linha só (senão o supabase-js perde a tipagem). A
+ * modalidade e as horas são da migration da ausência por horário: este app só
+ * lê o banco que já a tem (as migrations entram antes do app).
+ */
 const COLUNAS_DA_AUSENCIA =
-  'id, usuario_id, dia_inicio, dia_fim, tipo, observacao, atestado_path, lancado_por, lancado_em, cancelada_em, cancelada_por, motivo_cancelamento'
+  'id, usuario_id, dia_inicio, dia_fim, tipo, modalidade, hora_inicio, hora_fim, observacao, atestado_path, lancado_por, lancado_em, cancelada_em, cancelada_por, motivo_cancelamento'
 
 const BUCKET = 'ponto-atestados'
 

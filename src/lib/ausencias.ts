@@ -2,16 +2,18 @@
  * AS AUSÊNCIAS COM ATESTADO — as regras, os rótulos e a costura com o mês, sem
  * rede e sem React (no banco, `ponto_ausencias` e o bucket dos atestados).
  *
- * O QUE É: o admin lança uma falta justificada — um dia ou um período, o tipo,
- * uma observação e, se houver, o atestado (foto ou PDF). A ausência mora em
- * `ponto_ausencias`, ao lado das batidas, e NÃO É BATIDA: não tem horário, não
- * entra na ordem do dia e não muda conta nenhuma.
+ * O QUE É: o admin lança uma falta justificada: um dia, um período de dias ou
+ * um intervalo de horário dentro de um dia, o tipo, uma observação e, se
+ * houver, o atestado (foto ou PDF). A ausência mora em `ponto_ausencias`, ao
+ * lado das batidas, e NÃO É BATIDA: não entra na ordem do dia nem no
+ * trabalhado.
  *
- * ⚠ A SOMA DE HORAS DO MÊS NÃO MUDA POR CAUSA DE UMA AUSÊNCIA. É a regra que
+ * ⚠ O TRABALHADO DO MÊS NÃO MUDA POR CAUSA DE UMA AUSÊNCIA. É a regra que
  * este módulo existe para segurar. O espelho, o painel, a folha e o CSV
  * continuam somando as MESMAS batidas, por `horas.ts`; a ausência só ACRESCENTA
- * a marca do dia. Saldo e abono são assunto da folha — a ausência já fica
- * pronta para ser lida por eles, mas hoje ela não abona nada.
+ * a marca do dia. O abono é outra conta, por cima desta (`saldo.ts`): o
+ * atestado médico e a falta justificada abonam a parte da jornada prevista que
+ * a ausência cobre e que não foi trabalhada, e nenhuma batida some por isso.
  *
  * QUEM DECIDE É O BANCO. As regras de `validarLancamento` são as MESMAS do
  * gatilho `ponto_ausencias_guardar`, repetidas aqui para a tela recusar antes
@@ -34,6 +36,14 @@
 
 export type TipoDeAusencia = 'atestado_medico' | 'falta_justificada' | 'outro'
 
+/**
+ * Por dias (o período `dia_inicio` a `dia_fim`, dias inteiros) ou por horário
+ * (um intervalo de `hora_inicio` a `hora_fim` num dia só). Toda ausência
+ * lançada antes da coluna existir é `dias`, e o lançamento que não manda a
+ * modalidade grava `dias` (o padrão do banco).
+ */
+export type ModalidadeDaAusencia = 'dias' | 'horario'
+
 /** Uma linha de `ponto_ausencias`, com as colunas que o app lê. */
 export interface Ausencia {
   id: string
@@ -42,6 +52,15 @@ export interface Ausencia {
   dia_inicio: string
   dia_fim: string
   tipo: TipoDeAusencia
+  modalidade: ModalidadeDaAusencia
+  /**
+   * O intervalo da ausência por horário, no relógio de Brasília do dia
+   * `dia_inicio` (= `dia_fim`), como o PostgREST devolve uma coluna `time`:
+   * `HH:MM:SS`, sempre com os segundos em `00` (o banco recusa outro valor).
+   * O fim vem depois do início. Os dois nulos na ausência por dias.
+   */
+  hora_inicio: string | null
+  hora_fim: string | null
   observacao: string | null
   /** `{usuario_id}/{id}.{jpg|jpeg|png|webp|heic|pdf}` no bucket `ponto-atestados`. */
   atestado_path: string | null
