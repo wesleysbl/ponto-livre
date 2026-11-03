@@ -30,14 +30,14 @@ import { describe, expect, it } from 'vitest'
  * da estrutura, que é a primeira.
  *
  * As migrations que vêm depois da estrutura passam pelas mesmas invariantes de
- * segurança, e a da jornada tem as garantias dela conferidas aqui também: no
- * nível de cima nada se apaga, e a trava da própria ficha decide pela sessão,
- * sem exceção de papel.
+ * segurança, e a da jornada e a da ausência por horário têm as garantias delas
+ * conferidas aqui também: no nível de cima nada se apaga, e a trava da própria
+ * ficha e a da própria ausência decidem pela sessão, sem exceção de papel.
  *
  * E os arquivos dos testes de banco (`supabase/testes/*.sql`, que o
  * `npm run db:testar` roda no Supabase local e o CI roda no trabalho `banco`),
  * antes de eles chegarem a um banco:
- *   • existem os nove, com o nome no padrão que o script aceita, e nenhum está
+ *   • existem os dez, com o nome no padrão que o script aceita, e nenhum está
  *     vazio;
  *   • cada um abre com BEGIN, põe a marca de transação logo depois e termina
  *     em ROLLBACK, sem COMMIT em lugar nenhum (nem dentro de um DO): o que o
@@ -75,9 +75,10 @@ const testesDeBanco = import.meta.glob<string>('../supabase/testes/*.sql', {
 const TESTES_DE_BANCO = Object.entries(testesDeBanco)
   .map(([caminho, sql]) => ({ nome: nomeDoArquivo(caminho), sql }))
   .sort((a, b) => a.nome.localeCompare(b.nome))
-/** Os nove arquivos de testes de banco: a blindagem, as regras de cada parte do ponto e a conferência da estrutura. */
+/** Os dez arquivos de testes de banco: a blindagem, as regras de cada parte do ponto e a conferência da estrutura. */
 const TESTES_ESPERADOS = [
   'acesso.sql',
+  'ausencia_por_horario.sql',
   'ausencias.sql',
   'batida_esquecida.sql',
   'blindagem.sql',
@@ -635,6 +636,52 @@ describe('as garantias da jornada e da trava da própria ficha, no texto da migr
   })
 })
 
+describe('as garantias da ausência por horário e da trava da própria ausência, no texto da migration', () => {
+  const AUSENCIA = MIGRATIONS.find((migration) => /^\d{14}_ausencia_por_horario\.sql$/.test(migration.nome))?.sql ?? ''
+  const JORNADA = MIGRATIONS.findIndex((migration) => /^\d{14}_jornada_e_saldo\.sql$/.test(migration.nome))
+  const semComentarios = limpar(AUSENCIA, false)
+  /** A função trocada, do CREATE OR REPLACE ao `$$;` que fecha o corpo. */
+  const guarda = /CREATE OR REPLACE FUNCTION public\.ponto_ausencias_guardar\(\)[\s\S]*?\n\$\$;/.exec(semComentarios)?.[0] ?? ''
+
+  it('existe, depois da jornada, e no nível de cima só cria, concede, revoga, comenta e confere: nada se apaga', () => {
+    expect(AUSENCIA.trim()).not.toBe('')
+    expect(JORNADA).toBeGreaterThan(0)
+    expect(MIGRATIONS.findIndex((migration) => migration.sql === AUSENCIA)).toBeGreaterThan(JORNADA)
+    expect(instrucoesForaDasFormas(AUSENCIA)).toEqual([])
+  })
+
+  it('troca a função das ausências, que já existe, e não cria nada: nenhuma tabela, função, gatilho nem regra de acesso nova', () => {
+    expect(ESTRUTURA).toMatch(/CREATE FUNCTION public\.ponto_ausencias_guardar\(\)/)
+    expect(guarda).not.toBe('')
+    const semEla = oQueCriam(MIGRATIONS.filter((migration) => migration.sql !== AUSENCIA).map((migration) => migration.sql))
+    expect(oQueCriam(MIGRATIONS.map((migration) => migration.sql))).toEqual(semEla)
+  })
+
+  it('a trava da própria ausência decide pela sessão, sem exceção de papel, no cancelamento e no lançamento', () => {
+    expect(guarda).toMatch(/v_ator\s+uuid\s*:=\s*auth\.uid\(\);/)
+    expect(guarda).toMatch(/IF OLD\.usuario_id = v_ator THEN\s+RAISE EXCEPTION 'Quem e dono da ausencia nao cancela a propria ausencia/)
+    expect(guarda).toMatch(/IF NEW\.usuario_id = v_ator THEN\s+RAISE EXCEPTION 'Quem e dono da ausencia nao lanca a propria ausencia/)
+    // Nem o super admin escapa: a guarda não pergunta quem é super admin.
+    expect(guarda).not.toMatch(/ponto_sou_super_admin|ponto_super_admins/)
+    // No UPDATE, antes de tudo; no INSERT, antes do carimbo.
+    const cancelamento = guarda.indexOf('IF OLD.usuario_id = v_ator THEN')
+    expect(cancelamento).toBeGreaterThan(guarda.indexOf("IF TG_OP = 'UPDATE' THEN"))
+    expect(cancelamento).toBeLessThan(guarda.indexOf('IF OLD.cancelada_em IS NOT NULL THEN'))
+    const lancamento = guarda.indexOf('IF NEW.usuario_id = v_ator THEN')
+    expect(lancamento).toBeGreaterThan(guarda.indexOf('RETURN NEW;'))
+    expect(lancamento).toBeLessThan(guarda.indexOf('NEW.lancado_por   := v_ator;'))
+  })
+
+  it('a imutabilidade cobre a linha inteira, a trava por pessoa vem antes da sobreposição, e o app só ganha o INSERT das colunas novas', () => {
+    expect(guarda).toMatch(/\(to_jsonb\(NEW\) - c_colunas_do_cancelamento\) IS DISTINCT FROM \(to_jsonb\(OLD\) - c_colunas_do_cancelamento\)/)
+    const trava = guarda.indexOf('PERFORM pg_advisory_xact_lock(')
+    expect(trava).toBeGreaterThan(0)
+    expect(trava).toBeLessThan(guarda.indexOf('FROM public.ponto_ausencias a'))
+    expect(semComentarios).toContain('GRANT INSERT (modalidade, hora_inicio, hora_fim) ON public.ponto_ausencias TO authenticated;')
+    expect(soCodigo(AUSENCIA)).not.toMatch(/\bGRANT\s+(?:UPDATE|DELETE|TRUNCATE|ALL)\b[^;]*\bON\s+(?:TABLE\s+)?public\.ponto_ausencias\b/i)
+  })
+})
+
 describe('os detectores do teste da estrutura', () => {
   const funcao = (nome: string, cabecalho: string) =>
     `CREATE FUNCTION public.${nome}(p text)\nRETURNS void\nLANGUAGE plpgsql\n${cabecalho}\nAS $$\nBEGIN\n  RAISE NOTICE 'COMMIT;';\nEND;\n$$;\n`
@@ -789,7 +836,7 @@ describe('os detectores do teste da estrutura', () => {
 })
 
 describe('os testes de banco (supabase/testes)', () => {
-  it('existem os nove, com o nome no padrão que o script aceita, e nenhum está vazio', () => {
+  it('existem os dez, com o nome no padrão que o script aceita, e nenhum está vazio', () => {
     expect(TESTES_DE_BANCO.map((teste) => teste.nome)).toEqual(expect.arrayContaining(TESTES_ESPERADOS))
     for (const teste of TESTES_DE_BANCO) {
       // O mesmo padrão de scripts/testar-banco.sh.

@@ -92,8 +92,10 @@ END $partida$;
 -- ===========================================================================
 DO $catalogo$
 DECLARE
-  -- O que as migrations criam, somadas: a estrutura e a da jornada (o teste
-  -- estático confere estes números com elas).
+  -- O que as migrations criam, somadas: a estrutura, a da jornada e a da
+  -- ausência por horário (o teste estático confere estes números com elas; a
+  -- da ausência por horário troca uma função que já existia e não cria
+  -- nenhuma).
   c_tabelas         constant text[] := ARRAY[
     'ponto_admins', 'ponto_ausencias', 'ponto_configuracao', 'ponto_contas_trilha', 'ponto_correcoes',
     'ponto_funcionarios', 'ponto_local', 'ponto_pedidos_atraso', 'ponto_pin', 'ponto_pin_tentativas',
@@ -122,13 +124,16 @@ DECLARE
     'ponto_super_admins|authenticated:SELECT,service_role:SELECT'
   ];
   -- As colunas com privilégio próprio: o app lança e cancela ausência só pelas
-  -- colunas do formulário; a função de contas grava a trilha sem escolher id
-  -- nem momento.
+  -- colunas do formulário (a modalidade e as horas inclusive); a função de
+  -- contas grava a trilha sem escolher id nem momento.
   c_acl_colunas     constant text[] := ARRAY[
     'ponto_ausencias.atestado_path|authenticated:INSERT',
     'ponto_ausencias.dia_fim|authenticated:INSERT',
     'ponto_ausencias.dia_inicio|authenticated:INSERT',
+    'ponto_ausencias.hora_fim|authenticated:INSERT',
+    'ponto_ausencias.hora_inicio|authenticated:INSERT',
     'ponto_ausencias.id|authenticated:INSERT',
+    'ponto_ausencias.modalidade|authenticated:INSERT',
     'ponto_ausencias.motivo_cancelamento|authenticated:UPDATE',
     'ponto_ausencias.observacao|authenticated:INSERT',
     'ponto_ausencias.tipo|authenticated:INSERT',

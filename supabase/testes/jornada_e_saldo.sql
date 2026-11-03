@@ -25,11 +25,12 @@
 --   • O início do saldo (S1 a S6): a data na linha que já existe e na linha
 --     nova; quem administra recua a data, quem bate não; o app guardado no
 --     celular não a desfaz; nula é recusada.
---   • A trava da própria ficha (P1 a P13): ninguém muda a jornada própria nem
+--   • A trava da própria ficha (P1 a P14): ninguém muda a jornada própria nem
 --     a data em que passou a bater ponto na ficha ligada à própria conta, nem
 --     quem administra, nem o super admin, nem criando a ficha já ligada, nem
---     ligando a si uma ficha que já as tem; a ficha dos outros continua
---     editável, e a jornada da empresa também.
+--     ligando a si uma ficha que já as tem, nem pelo upsert (INSERT ... ON
+--     CONFLICT DO UPDATE); a ficha dos outros continua editável, e a jornada
+--     da empresa também.
 --
 -- POR QUE `postgres`: é o papel que aplica a migration no Supabase hospedado,
 -- dono das tabelas e das funções do ponto, sem superusuário. Os casos J1 a J7
@@ -785,6 +786,66 @@ BEGIN
   EXCEPTION WHEN OTHERS THEN
     v_res := v_res || ('FALHOU P13 sem sessao, a ficha foi recusada: ' || SQLERRM);
   END;
+
+  -- P14. O upsert (INSERT ... ON CONFLICT DO UPDATE) não contorna a trava: o
+  --      INSERT do upsert passa pelos gatilhos com a linha proposta, e o
+  --      UPDATE do conflito, com a ficha que já existe. Quem administra, na
+  --      própria ficha, pelo id (a linha proposta sem a conta, para o conflito
+  --      cair no UPDATE): (a) a jornada no SET; (b) a data pelo EXCLUDED. O
+  --      super admin, pela conta (a linha proposta já ligada a ele): (c) a
+  --      data e a jornada no SET; (d) a data na própria linha proposta. No
+  --      fim, as duas fichas continuam como estavam.
+  v_ok := true;
+  v_erro := NULL;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_rita, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    INSERT INTO public.ponto_funcionarios (id, nome_completo, cargo) VALUES (v_ficha_rita, 'Rita Moraes', 'RH')
+    ON CONFLICT (id) DO UPDATE SET jornada = c_propria;
+    v_ok := false;
+    v_erro := concat_ws(' / ', v_erro, '(a) passou');
+  EXCEPTION WHEN OTHERS THEN
+    v_ok := v_ok AND SQLSTATE = '42501' AND SQLERRM = c_dono_muda;
+    v_erro := concat_ws(' / ', v_erro, '(a) ' || SQLERRM);
+  END;
+  BEGIN
+    INSERT INTO public.ponto_funcionarios (id, nome_completo, cargo, bate_ponto_desde) VALUES (v_ficha_rita, 'Rita Moraes', 'RH', v_hoje - 3650)
+    ON CONFLICT (id) DO UPDATE SET bate_ponto_desde = EXCLUDED.bate_ponto_desde;
+    v_ok := false;
+    v_erro := concat_ws(' / ', v_erro, '(b) passou');
+  EXCEPTION WHEN OTHERS THEN
+    v_ok := v_ok AND SQLSTATE = '42501' AND SQLERRM = c_dono_muda;
+    v_erro := concat_ws(' / ', v_erro, '(b) ' || SQLERRM);
+  END;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_sergio, 'role', 'authenticated')::text, true);
+  BEGIN
+    INSERT INTO public.ponto_funcionarios (usuario_id, nome_completo, cargo) VALUES (v_sergio, 'Sérgio Almeida', 'Diretoria')
+    ON CONFLICT (usuario_id) WHERE usuario_id IS NOT NULL
+    DO UPDATE SET bate_ponto_desde = v_hoje, jornada = '[{"dia": 1, "inicio": "08:00", "fim": "09:00"}]';
+    v_ok := false;
+    v_erro := concat_ws(' / ', v_erro, '(c) passou');
+  EXCEPTION WHEN OTHERS THEN
+    v_ok := v_ok AND SQLSTATE = '42501' AND SQLERRM = c_dono_muda;
+    v_erro := concat_ws(' / ', v_erro, '(c) ' || SQLERRM);
+  END;
+  BEGIN
+    INSERT INTO public.ponto_funcionarios (usuario_id, nome_completo, cargo, bate_ponto_desde) VALUES (v_sergio, 'Sérgio Almeida', 'Diretoria', v_hoje)
+    ON CONFLICT (usuario_id) WHERE usuario_id IS NOT NULL
+    DO UPDATE SET bate_ponto_desde = EXCLUDED.bate_ponto_desde;
+    v_ok := false;
+    v_erro := concat_ws(' / ', v_erro, '(d) passou');
+  EXCEPTION WHEN OTHERS THEN
+    v_ok := v_ok AND SQLSTATE = '42501' AND SQLERRM = c_dono_liga;
+    v_erro := concat_ws(' / ', v_erro, '(d) ' || SQLERRM);
+  END;
+  SELECT count(*) FILTER (WHERE f.id = v_ficha_rita AND f.usuario_id = v_rita AND f.jornada IS NULL AND f.bate_ponto_desde = v_hoje - 200),
+         count(*) FILTER (WHERE f.id = v_ficha_serg AND f.usuario_id = v_sergio AND f.jornada = c_semente AND f.bate_ponto_desde = v_hoje - 400)
+    INTO v_n, v_n2
+    FROM public.ponto_funcionarios f WHERE f.id IN (v_ficha_rita, v_ficha_serg);
+  v_res := v_res || format('%s P14 o upsert na propria ficha, mudando a jornada ou a data, e recusado (quem administra e super admin), e as fichas ficam como estavam (%s e %s): %s',
+    CASE WHEN v_ok AND v_n = 1 AND v_n2 = 1 THEN 'OK' ELSE 'FALHOU' END, v_n, v_n2, v_erro);
+  PERFORM set_config('request.jwt.claims', '', true);
+  RESET ROLE;
 
   PERFORM set_config('request.jwt.claims', '', true);
   PERFORM set_config('teste.resultado',
