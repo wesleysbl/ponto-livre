@@ -7,15 +7,18 @@ import { agruparPorDia, montarEspelho, resumirDias } from './horas'
 import { montarLinhasDoPainel } from './painel'
 
 /*
- * A AUSÊNCIA NAS QUATRO LEITURAS — espelho, painel, folha e CSV.
+ * A AUSÊNCIA NAS QUATRO LEITURAS: espelho, painel, folha e CSV.
  *
  * O que se prova:
  *  • uma ausência de 3 dias gera 3 dias marcados na folha e no CSV;
  *  • ausência cancelada não aparece;
  *  • um dia com ausência e batida mostra os dois;
- *  • a soma de horas do mês NÃO muda por causa de uma ausência (saldo e abono
- *    são assunto da folha de pagamento, fora do ponto) — nem no espelho, nem no
- *    painel, nem na folha, nem no CSV.
+ *  • a soma de horas TRABALHADAS do mês NÃO muda por causa de uma ausência,
+ *    nem no espelho, nem no painel, nem na folha, nem no CSV. O abono do
+ *    atestado e da falta justificada é outra conta, por cima desta
+ *    (`saldo.ts`), e nenhuma batida some por ele;
+ *  • a ausência por horário marca o dia dela, e só ele, nas quatro leituras, e
+ *    também não muda o trabalhado.
  */
 
 const MES = '2026-10'
@@ -263,5 +266,68 @@ describe('o painel e o espelho com ausência', () => {
 
   it('o espelho do colaborador soma o mesmo: a ausência fica fora de horas.ts', () => {
     expect(resumirDias(agruparPorDia(BATIDAS)).minutos).toBe(montarEspelho(MES, BATIDAS).minutos)
+  })
+})
+
+describe('a ausência por horário nas leituras', () => {
+  /** Dia 20 tem as quatro batidas (8h); a ausência das 14:00 às 16:00 cai nele. */
+  const NO_DIA_COM_BATIDA = ausencia('a-tarde', {
+    dia_inicio: '2026-10-20',
+    dia_fim: '2026-10-20',
+    modalidade: 'horario',
+    hora_inicio: '14:00:00',
+    hora_fim: '16:00:00',
+    atestado_path: null,
+  })
+  /** Dia 21 não tem batida: a ausência das 09:00 às 10:00 é o único conteúdo dele. */
+  const NO_DIA_SEM_BATIDA = ausencia('a-manha', {
+    dia_inicio: '2026-10-21',
+    dia_fim: '2026-10-21',
+    tipo: 'falta_justificada',
+    modalidade: 'horario',
+    hora_inicio: '09:00:00',
+    hora_fim: '10:00:00',
+    atestado_path: null,
+  })
+  const POR_HORARIO = [NO_DIA_COM_BATIDA, NO_DIA_SEM_BATIDA]
+
+  it('marca só o dia dela, como uma ausência de um dia', () => {
+    const porDia = ausenciasPorDia(POR_HORARIO, OUTUBRO)
+    expect([...porDia.keys()].sort()).toEqual(['2026-10-20', '2026-10-21'])
+    expect(porDia.get('2026-10-20')?.map((a) => a.id)).toEqual(['a-tarde'])
+  })
+
+  it('na folha, o dia com batida mostra os dois, o dia sem batida entra sem horas, e o total não muda', () => {
+    const sem = montarFolha({ empresa: null, funcionario, mes: MES, batidas: BATIDAS })
+    const com = montarFolha({ empresa: null, funcionario, mes: MES, batidas: BATIDAS, ausencias: POR_HORARIO })
+    const dia20 = com.linhas.find((linha) => linha.dia === '2026-10-20')
+    expect(dia20).toMatchObject({ ausencia: true, total: '8h00' })
+    // Uma marca de ausência (as outras marcas do dia são as das batidas).
+    expect(dia20?.marcas.filter((marca) => marca.startsWith('Falta justificada'))).toHaveLength(1)
+    expect(com.linhas.find((linha) => linha.dia === '2026-10-21')).toMatchObject({ ausencia: true, minutos: 0, horarios: [] })
+    expect(com.total).toBe('20h00')
+    expect(com.total).toBe(sem.total)
+    expect(com.resumo).toEqual(sem.resumo)
+  })
+
+  it('no CSV, uma linha de ausência em cada dia, e a soma de horas é a mesma', () => {
+    const linhas = linhasDoCsv(gerarCsvDoPeriodo([{ ...funcionario, batidas: BATIDAS, ausencias: ausenciasPorDia(POR_HORARIO, OUTUBRO) }]))
+    const deAusencia = linhas.filter((linha) => linha[coluna('Tipo')] === TIPO_DA_LINHA_DE_AUSENCIA)
+    expect(deAusencia.map((linha) => linha[coluna('Data')])).toEqual(['20/10/2026', '21/10/2026'])
+    const soma = linhas
+      .map((linha) => linha[coluna('Horas do dia (decimal)')])
+      .filter(Boolean)
+      .reduce((total, valor) => total + Number(valor.replace(',', '.')), 0)
+    expect(soma).toBe(20)
+  })
+
+  it('no painel, conta os dois dias de ausência, e o resumo de horas não muda', () => {
+    const pessoas = [
+      { usuarioId: 'u1', nome: 'Fulana', nomeDaConta: 'Fulana', email: null, podeBater: true, contaApagada: false, temFicha: false },
+    ]
+    const [sem] = montarLinhasDoPainel(pessoas, BATIDAS)
+    const [com] = montarLinhasDoPainel(pessoas, BATIDAS, ausenciasPorPessoa(POR_HORARIO, OUTUBRO))
+    expect(com.ausencias.size).toBe(2)
+    expect(com.resumo).toEqual(sem.resumo)
   })
 })

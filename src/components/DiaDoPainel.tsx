@@ -396,7 +396,12 @@ interface PropsDoDiaSemBatida {
   /** O nome do feriado nacional: a linha ganha a etiqueta "feriado", como a do fim de semana. */
   feriado?: string | null
   aoInserirNesteDia: (dia: string) => void
-  aoLancarFaltaNesteDia: (dia: string) => void
+  /**
+   * Abre a caixa de ausência com o dia. Sem ele, a linha não oferece lançar
+   * falta: é a própria ficha de quem está logado, e quem é dono do ponto não
+   * lança a própria ausência (a tela diz o porquê uma vez, no topo).
+   */
+  aoLancarFaltaNesteDia?: (dia: string) => void
   /** Os pedidos de batida em atraso deste dia que esperam decisão. */
   pedidos?: readonly PedidoDeAtraso[]
   aoVerPedido?: (pedido: PedidoDeAtraso) => void
@@ -439,10 +444,12 @@ export function DiaSemBatida({
           <PencilLine size={13} aria-hidden="true" />
           Inserir batida neste dia
         </BotaoDoDia>
-        <BotaoDoDia aoClicar={() => aoLancarFaltaNesteDia(dia)}>
-          <CalendarX2 size={13} aria-hidden="true" />
-          Lançar falta neste dia
-        </BotaoDoDia>
+        {aoLancarFaltaNesteDia && (
+          <BotaoDoDia aoClicar={() => aoLancarFaltaNesteDia(dia)}>
+            <CalendarX2 size={13} aria-hidden="true" />
+            Lançar falta neste dia
+          </BotaoDoDia>
+        )}
       </div>
     </li>
   )

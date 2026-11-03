@@ -7,6 +7,7 @@ import {
   CalendarX2,
   Download,
   KeyRound,
+  Lock,
   PencilLine,
   Plus,
   Printer,
@@ -16,7 +17,7 @@ import {
 import { AjusteDeBatida, type GravacaoDoAjuste, type ModoDoAjuste } from '../components/AjusteDeBatida'
 import { AusenciasDoPeriodo, CaixaDeCancelamento } from '../components/AusenciasDoPeriodo'
 import { DiaDeAusencia } from '../components/DiaDeAusencia'
-import { LancamentoDeAusencia } from '../components/LancamentoDeAusencia'
+import { LancamentoDeAusencia, POR_QUE_A_PROPRIA_AUSENCIA_NAO_SE_LANCA } from '../components/LancamentoDeAusencia'
 import { VisorDeAtestado } from '../components/VisorDeAtestado'
 import { BotaoDoDia, DiaDoPainel, DiaSemBatida, PedidosEsperandoNoDia } from '../components/DiaDoPainel'
 import { PendenciasDeAtraso, type PedidoDecidido } from '../components/PendenciasDeAtraso'
@@ -45,8 +46,10 @@ import {
   listarDiasDoPeriodo,
   TETO_DE_DIAS_NA_LISTA,
 } from '../lib/corrigir'
+import { fichaDaSessao } from '../lib/cadastro'
 import { lerAusenciasDoPeriodo } from '../lib/faltas'
 import { lerAprovadoresDoPeriodo } from '../lib/pedidos'
+import { useAuth } from '../hooks/useAuth'
 import { baixarCsv } from '../lib/download'
 import type { PedidoDeAtraso } from '../lib/atraso'
 import { diaCivilDeHoje, formatarHora, type BatidaDoAdmin } from '../lib/formato'
@@ -122,6 +125,16 @@ import {
  * links do bloco "Antes de fechar" e da folha, com a âncora do dia
  * (`#dia-2026-10-16`) ou a dos pedidos: quando os dados chegam, ela rola até a
  * âncora (no lugar de hoje) e destaca o dia por 3 s.
+ *
+ * A PRÓPRIA FICHA DE QUEM ESTÁ LOGADO NÃO LANÇA NEM CANCELA AUSÊNCIA
+ * Quando a pessoa desta tela é a conta da sessão (`fichaDaSessao`), somem o
+ * "Lançar falta justificada" do topo, o "Lançar falta neste dia" de cada dia
+ * vazio e o "Cancelar" de cada ausência, e no lugar fica a frase do porquê
+ * (`POR_QUE_A_PROPRIA_AUSENCIA_NAO_SE_LANCA`). Quem recusa de verdade é o
+ * banco, para todo mundo, inclusive o super admin: com o abono, a ausência em
+ * causa própria vira crédito de horas, e quem é dono do ponto não decide o
+ * próprio ponto. A tela só não oferece o que o banco vai recusar; se a recusa
+ * chegar assim mesmo (pela API), ela vem traduzida (`faltas.ts`).
  */
 
 interface Dados {
@@ -171,6 +184,9 @@ export function PainelDaPessoa() {
   const navegar = useNavigate()
   const { usuarioId = '' } = useParams()
   const [parametros, setParametros] = useSearchParams()
+  const { usuario } = useAuth()
+  /** A pessoa desta tela é a conta da sessão: sem lançar nem cancelar a própria ausência. */
+  const propria = fichaDaSessao(usuarioId || null, usuario?.id ?? null)
 
   const padrao = useMemo(() => periodoPadrao(), [])
   // O dia civil do ponto, lido uma vez: a lista termina nele e o botão do topo abre nele.
@@ -613,14 +629,25 @@ export function PainelDaPessoa() {
             Inserir batida esquecida
           </Botao>
 
-          <Botao
-            tom="secundario"
-            onClick={() => setLancandoEm(diaDoTopo)}
-            disabled={carregando || Boolean(dados.erro)}
-          >
-            <CalendarX2 size={15} aria-hidden="true" />
-            Lançar falta justificada
-          </Botao>
+          {propria ? (
+            <div id="propria-ausencia-explicacao">
+              <Aviso tom="neutro">
+                <span className="inline-flex items-start gap-1.5 text-xs">
+                  <Lock size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
+                  <span>{POR_QUE_A_PROPRIA_AUSENCIA_NAO_SE_LANCA}</span>
+                </span>
+              </Aviso>
+            </div>
+          ) : (
+            <Botao
+              tom="secundario"
+              onClick={() => setLancandoEm(diaDoTopo)}
+              disabled={carregando || Boolean(dados.erro)}
+            >
+              <CalendarX2 size={15} aria-hidden="true" />
+              Lançar falta justificada
+            </Botao>
+          )}
 
           {/*
             A FOLHA E O CSV CONVIVEM, e não se substituem: o CSV é da
@@ -785,7 +812,7 @@ export function PainelDaPessoa() {
                   fimDeSemana={fimDeSemana}
                   feriado={feriado}
                   aoInserirNesteDia={inserirNesteDia}
-                  aoLancarFaltaNesteDia={setLancandoEm}
+                  aoLancarFaltaNesteDia={propria ? undefined : setLancandoEm}
                   pedidos={pedidosPorDia.get(diaCivil)}
                   aoVerPedido={verPedido}
                 />
@@ -802,7 +829,8 @@ export function PainelDaPessoa() {
             ausencias={dados.ausencias}
             nomeDe={(id) => nomesDosAutores.get(id) ?? null}
             aoAbrirAtestado={setAtestadoAberto}
-            aoCancelar={setCancelando}
+            aoCancelar={propria ? undefined : setCancelando}
+            porQueSemCancelar={propria ? POR_QUE_A_PROPRIA_AUSENCIA_NAO_SE_LANCA : undefined}
           />
         )}
       </main>
@@ -826,7 +854,7 @@ export function PainelDaPessoa() {
         />
       )}
 
-      {lancandoEm && (
+      {lancandoEm && !propria && (
         <LancamentoDeAusencia
           usuarioId={usuarioId}
           nomeDoFuncionario={funcionario.nome}
@@ -840,7 +868,7 @@ export function PainelDaPessoa() {
         />
       )}
 
-      {cancelando && (
+      {cancelando && !propria && (
         <CaixaDeCancelamento
           ausencia={cancelando}
           nomeDaPessoa={funcionario.nome}

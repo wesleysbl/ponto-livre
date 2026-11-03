@@ -10,8 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  *     INSERT, que o gatilho confere contra o bucket.
  *   • TENTAR DE NOVO COM O MESMO ID SEGUE: o "já existe" do storage não é erro.
  *     Qualquer outro erro do envio para tudo antes do INSERT.
- *   • O INSERT manda só as sete colunas que o privilégio de coluna deixa; o
+ *   • O INSERT manda só as dez colunas que o privilégio de coluna deixa, com a
+ *     modalidade e as horas (nulas por dias, mesmo que cheguem preenchidas); o
  *     cancelamento manda só `motivo_cancelamento`, e sem motivo nem viaja.
+ *   • A tentativa repetida com o mesmo id que acha a própria linha como
+ *     sobreposta é sucesso, nas quatro frases de sobreposição.
  *   • A leitura é por SOBREPOSIÇÃO ao período (o atestado de 28/09 a 02/10 é de
  *     outubro também), paginada e ordenada.
  *   • O link do atestado é do bucket `ponto-atestados` e vive dois minutos.
@@ -19,7 +22,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  *     refeita sai maior: o original leva os metadados da câmera. E a tela só
  *     diz "reduzida" quando o arquivo de fato diminuiu.
  *   • O contrato: toda frase de recusa dos gatilhos das ausências, lida da
- *     migration da estrutura do banco, chega traduzida.
+ *     migration da estrutura do banco e da migration da ausência por horário,
+ *     chega traduzida, e as duas da própria ausência (lançar e cancelar) com
+ *     frase própria, antes da tradução genérica de 42501.
  */
 
 const simulado = vi.hoisted(() => {
@@ -94,6 +99,7 @@ const {
   urlAssinadaDoAtestado,
 } = await import('./faltas')
 const { ErroDoPainel } = await import('./admin')
+const { MODALIDADES_DE_AUSENCIA } = await import('./ausencias')
 
 const { estado } = simulado
 
@@ -111,12 +117,29 @@ const ATESTADO_JPG = {
 const LANCAMENTO = {
   id: ID,
   usuarioId: USUARIO,
+  modalidade: 'dias' as const,
   diaInicio: '2026-10-14',
   diaFim: '2026-10-16',
+  horaInicio: null,
+  horaFim: null,
   tipo: 'atestado_medico' as const,
   observacao: null,
   atestado: ATESTADO_JPG,
 }
+
+/** As colunas do privilégio de INSERT do app: as sete da estrutura e as três da ausência por horário. */
+const COLUNAS_DO_INSERT = [
+  'atestado_path',
+  'dia_fim',
+  'dia_inicio',
+  'hora_fim',
+  'hora_inicio',
+  'id',
+  'modalidade',
+  'observacao',
+  'tipo',
+  'usuario_id',
+]
 
 beforeEach(() => {
   estado.consultas = []
@@ -142,14 +165,46 @@ describe('lançar a ausência', () => {
     expect(estado.consultas.map((c) => c.tabela)).toEqual(['ponto_ausencias'])
   })
 
-  it('o INSERT manda só as sete colunas do privilégio, com o mesmo id e o mesmo caminho', async () => {
+  it('o INSERT manda só as dez colunas do privilégio, com o mesmo id e o mesmo caminho', async () => {
     await lancarAusencia(LANCAMENTO)
     const inserido = operacao('insert')?.args[0] as Record<string, unknown>
-    expect(Object.keys(inserido).sort()).toEqual(
-      ['atestado_path', 'dia_fim', 'dia_inicio', 'id', 'observacao', 'tipo', 'usuario_id'].sort(),
-    )
+    expect(Object.keys(inserido).sort()).toEqual([...COLUNAS_DO_INSERT].sort())
     expect(inserido).toMatchObject({ id: ID, usuario_id: USUARIO, atestado_path: `${USUARIO}/${ID}.jpg` })
     expect(operacao('single')).toBeDefined()
+  })
+
+  it('por dias: modalidade "dias", o período como veio e as horas nulas', async () => {
+    await lancarAusencia(LANCAMENTO)
+    expect(operacao('insert')?.args[0]).toMatchObject({
+      modalidade: 'dias',
+      dia_inicio: '2026-10-14',
+      dia_fim: '2026-10-16',
+      hora_inicio: null,
+      hora_fim: null,
+    })
+  })
+
+  it('por dias, hora que chegue preenchida não vai: o gatilho recusaria horário por dias', async () => {
+    await lancarAusencia({ ...LANCAMENTO, horaInicio: '14:00', horaFim: '16:00' })
+    expect(operacao('insert')?.args[0]).toMatchObject({ modalidade: 'dias', hora_inicio: null, hora_fim: null })
+  })
+
+  it('por horário: modalidade "horario", um dia só e as duas horas', async () => {
+    await lancarAusencia({
+      ...LANCAMENTO,
+      modalidade: 'horario',
+      diaInicio: '2026-10-21',
+      diaFim: '2026-10-21',
+      horaInicio: '14:00',
+      horaFim: '16:00',
+    })
+    expect(operacao('insert')?.args[0]).toMatchObject({
+      modalidade: 'horario',
+      dia_inicio: '2026-10-21',
+      dia_fim: '2026-10-21',
+      hora_inicio: '14:00',
+      hora_fim: '16:00',
+    })
   })
 
   it('sem atestado, não toca o bucket e manda o caminho nulo', async () => {
@@ -228,6 +283,37 @@ describe('lançar a ausência', () => {
     await expect(lancarAusencia(LANCAMENTO)).rejects.toThrow('Já existe uma ausência lançada')
     expect(estado.consultas).toHaveLength(2)
   })
+
+  /*
+   * O mesmo caso com as frases de sobreposição da ausência por horário: a
+   * ausência por horário repetida (mesmo id) acha a própria linha como
+   * "horário que cruza". O app tem de reconhecer o próprio id do mesmo jeito.
+   */
+  it.each([
+    'Ja existe ausencia por horario desta pessoa que cruza este horario (de 14:00 a 16:00): intervalos que so se encostam valem, como 14:00-16:00 e 16:00-16:30',
+    'Ja existe ausencia de dia inteiro desta pessoa neste dia: cancele a anterior antes de lancar por horario',
+    'Ja existe ausencia por horario desta pessoa em parte deste periodo (dia 21/10/2026, de 14:00 a 16:00): cancele a anterior antes de lancar por dias',
+  ])('na sobreposição por horário com a própria linha, também é sucesso: "%s"', async (frase) => {
+    estado.respostaDaTabela = (_tabela, ops) =>
+      ops.some((op) => op.metodo === 'insert')
+        ? { data: null, error: { message: frase } }
+        : { data: { id: ID, dia_inicio: '2026-10-21' }, error: null }
+    const gravada = await lancarAusencia(LANCAMENTO)
+    expect(gravada).toMatchObject({ id: ID })
+    expect(estado.consultas).toHaveLength(2)
+  })
+
+  it('a recusa da própria ausência não relê a linha: não é sobreposição', async () => {
+    estado.respostaDaTabela = () => ({
+      data: null,
+      error: {
+        message:
+          'Quem e dono da ausencia nao lanca a propria ausencia: peca a outra pessoa que administra o ponto ou ao super admin',
+      },
+    })
+    await expect(lancarAusencia(LANCAMENTO)).rejects.toThrow('Você não pode lançar ausência para você mesmo')
+    expect(estado.consultas).toHaveLength(1)
+  })
 })
 
 describe('cancelar a ausência', () => {
@@ -248,6 +334,19 @@ describe('cancelar a ausência', () => {
       error: { message: 'Ausencia ja cancelada: o cancelamento e definitivo' },
     })
     await expect(cancelarAusencia({ ausenciaId: ID, motivo: 'de novo' })).rejects.toThrow('já foi cancelada')
+  })
+
+  it('cancelar a própria ausência volta com a frase da regra, e não com "entre de novo"', async () => {
+    estado.respostaDaTabela = () => ({
+      data: null,
+      error: {
+        message:
+          'Quem e dono da ausencia nao cancela a propria ausencia: peca a outra pessoa que administra o ponto ou ao super admin',
+      },
+    })
+    await expect(cancelarAusencia({ ausenciaId: ID, motivo: 'lançada no dia errado' })).rejects.toThrow(
+      'Você não pode cancelar a sua própria ausência',
+    )
   })
 })
 
@@ -564,5 +663,156 @@ describe('o contrato com o banco (a migration da estrutura)', () => {
     expect(sql).toContain('v_hoje - 366')
     expect(sql).toContain('char_length(observacao) <= 1000')
     expect(sql).toContain('char_length(motivo_cancelamento) <= 500')
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* O contrato com a migration da ausência por horário                  */
+/* ------------------------------------------------------------------ */
+
+describe('o contrato com o banco (a migration da ausência por horário)', () => {
+  const migracoes = import.meta.glob<string>('../../supabase/migrations/*_ausencia_por_horario.sql', {
+    query: '?raw',
+    import: 'default',
+    eager: true,
+  })
+  const sql = Object.values(migracoes).join('\n')
+
+  /*
+   * O corpo da guardiã, que a migration SUBSTITUI (`CREATE OR REPLACE`): é ela
+   * que responde ao app. A partida e o fim da própria migration ("nao
+   * aplicada", "desfeita") não chegam ao app e ficam de fora.
+   */
+  const guardia =
+    /CREATE OR REPLACE FUNCTION public\.ponto_ausencias_guardar\(\)[\s\S]*?\nAS \$\$\n([\s\S]*?)\n\$\$;/.exec(sql)?.[1] ?? ''
+  const frases = [...guardia.matchAll(/RAISE EXCEPTION '((?:[^']|'')+)'/g)].map((casamento) =>
+    casamento[1].replace(/''/g, "'").replace(/%/g, 'x'),
+  )
+
+  it('a migration está no repositório, com as frases novas da guardiã', () => {
+    expect(Object.keys(migracoes)).toHaveLength(1)
+    expect(guardia).not.toBe('')
+    for (const nova of [
+      'Quem e dono da ausencia nao lanca a propria ausencia',
+      'Quem e dono da ausencia nao cancela a propria ausencia',
+      'Modalidade de ausencia invalida',
+      'Ausencia por dias nao leva horario',
+      'Ausencia por horario exige o horario inicial e o final',
+      'Ausencia por horario e de um dia so',
+      'Horario fora do formato',
+      'Horario invertido',
+      'Ja existe ausencia de dia inteiro desta pessoa neste dia',
+      'Ja existe ausencia por horario desta pessoa em parte deste periodo',
+      'Ja existe ausencia por horario desta pessoa que cruza este horario',
+    ]) {
+      expect(frases.some((frase) => frase.startsWith(nova)), nova).toBe(true)
+    }
+  })
+
+  it.each(frases)('"%s" chega traduzida, e não crua', (frase) => {
+    const traduzida = new ErroDaAusencia(frase).message
+    expect(traduzida).not.toBe(frase)
+    expect(traduzida).not.toBe(new ErroDoPainel(frase).message)
+  })
+
+  it.each([
+    [
+      'Quem e dono da ausencia nao lanca a propria ausencia: peca a outra pessoa que administra o ponto ou ao super admin',
+      'Você não pode lançar ausência para você mesmo: quem é dono do ponto não lança a própria ausência, e isso vale também para quem administra e para o super admin. Peça a outra pessoa que administra o ponto, ou ao super admin.',
+    ],
+    [
+      'Quem e dono da ausencia nao cancela a propria ausencia: peca a outra pessoa que administra o ponto ou ao super admin',
+      'Você não pode cancelar a sua própria ausência: quem é dono do ponto não cancela a própria ausência, e isso vale também para quem administra e para o super admin. Peça a outra pessoa que administra o ponto, ou ao super admin.',
+    ],
+    ['Modalidade de ausencia invalida: use dias ou horario', 'Escolha se a ausência é por dias ou por horário.'],
+    [
+      'Ausencia por dias nao leva horario: para um intervalo do dia, lance por horario',
+      'Ausência por dias não leva horário. Para um intervalo do dia, escolha “Por horário”.',
+    ],
+    ['Ausencia por horario exige o horario inicial e o final', 'Informe o horário inicial e o final.'],
+    [
+      'Ausencia por horario e de um dia so: o dia final tem de ser o mesmo do inicial',
+      'A ausência por horário é de um dia só: o dia final tem de ser o mesmo do inicial.',
+    ],
+    ['Horario invertido: o horario final tem de ser depois do inicial', 'O horário final tem de ser depois do inicial.'],
+    ['Horario fora do formato: use horas e minutos exatos, de 00:00 a 23:59', 'Use horas e minutos exatos, de 00:00 a 23:59.'],
+    [
+      'Ja existe ausencia de dia inteiro desta pessoa neste dia: cancele a anterior antes de lancar por horario',
+      'Já existe uma ausência de dia inteiro lançada para esta pessoa neste dia. Para lançar por horário, cancele a anterior (com motivo) e lance de novo.',
+    ],
+    [
+      'Ja existe ausencia por horario desta pessoa em parte deste periodo (dia 21/10/2026, de 14:00 a 16:00): cancele a anterior antes de lancar por dias',
+      'Já existe uma ausência por horário lançada para esta pessoa neste período (em 21/10/2026, das 14:00 às 16:00). Para lançar por dias, cancele a anterior (com motivo) e lance de novo.',
+    ],
+    [
+      'Ja existe ausencia por horario desta pessoa que cruza este horario (de 14:00 a 16:00): intervalos que so se encostam valem, como 14:00-16:00 e 16:00-16:30',
+      'Este horário cruza outra ausência desta pessoa no mesmo dia (das 14:00 às 16:00). Horários que só se encostam valem, como 14:00-16:00 e 16:00-16:30.',
+    ],
+    [
+      'new row for relation "ponto_ausencias" violates check constraint "ponto_ausencias_modalidade_coerente"',
+      'O horário da ausência não vale: por dias, sem horário; por horário, um dia só, com o fim depois do início, em horas e minutos exatos.',
+    ],
+    [
+      'new row for relation "ponto_ausencias" violates check constraint "ponto_ausencias_horario_no_minuto"',
+      'O horário da ausência não vale: por dias, sem horário; por horário, um dia só, com o fim depois do início, em horas e minutos exatos.',
+    ],
+  ])('"%s" vira "%s"', (frase, esperada) => {
+    expect(new ErroDaAusencia(frase).message).toBe(esperada)
+  })
+
+  /*
+   * As duas da própria ausência voltam com 42501, o mesmo código de "sem
+   * sessão de admin" e "só admin lança". A frase própria tem de ganhar da
+   * genérica: "entre de novo" não resolve uma regra que vale para todo mundo.
+   */
+  it('a recusa da própria ausência não cai na frase de "só quem administra" nem na de "entre de novo"', () => {
+    for (const frase of frases.filter((frase) => frase.startsWith('Quem e dono da ausencia'))) {
+      const traduzida = new ErroDaAusencia(frase).message
+      expect(traduzida).not.toMatch(/Entre de novo|Só quem administra/)
+      expect(traduzida).toMatch(/própria ausência/)
+    }
+    expect(frases.filter((frase) => frase.startsWith('Quem e dono da ausencia'))).toHaveLength(2)
+  })
+
+  it('nenhuma frase traduzida da ausência tem travessão', () => {
+    for (const frase of frases) expect(new ErroDaAusencia(frase).message).not.toMatch(/[\u2013\u2014]/)
+  })
+
+  it('a frase de sempre (por dias com por dias) continua a mesma, com a mesma tradução', () => {
+    expect(sql).toContain(
+      "'Ja existe ausencia ativa desta pessoa em parte deste periodo: cancele a anterior antes de lancar de novo'",
+    )
+    expect(
+      new ErroDaAusencia('Ja existe ausencia ativa desta pessoa em parte deste periodo: cancele a anterior antes de lancar de novo').message,
+    ).toBe(
+      'Já existe uma ausência lançada para esta pessoa em parte deste período. Para corrigir, cancele a anterior (com motivo) e lance de novo.',
+    )
+  })
+
+  it('cada coluna do INSERT do app é concedida: as sete da estrutura e as três desta', async () => {
+    const estrutura = Object.values(
+      import.meta.glob<string>('../../supabase/migrations/*_ponto_livre_estrutura.sql', {
+        query: '?raw',
+        import: 'default',
+        eager: true,
+      }),
+    ).join('\n')
+    const concedidas = [
+      ...(/GRANT INSERT \(([^)]+)\)\s+ON public\.ponto_ausencias TO authenticated/.exec(estrutura)?.[1] ?? '').split(','),
+      ...(/GRANT INSERT \(([^)]+)\)\s+ON public\.ponto_ausencias TO authenticated/.exec(sql)?.[1] ?? '').split(','),
+    ].map((coluna) => coluna.trim())
+    expect([...concedidas].sort()).toEqual([...COLUNAS_DO_INSERT].sort())
+    await lancarAusencia({ ...LANCAMENTO, modalidade: 'horario', diaFim: LANCAMENTO.diaInicio, horaInicio: '14:00', horaFim: '16:00' })
+    const inserido = operacao('insert')?.args[0] as Record<string, unknown>
+    for (const coluna of Object.keys(inserido)) expect(concedidas, coluna).toContain(coluna)
+  })
+
+  it('o padrão é por dias, sem UPDATE nas colunas novas, e as modalidades são as do app', () => {
+    expect(sql).toContain('GRANT INSERT (modalidade, hora_inicio, hora_fim) ON public.ponto_ausencias TO authenticated;')
+    expect(sql).toContain("ADD COLUMN modalidade text NOT NULL DEFAULT 'dias'::text")
+    expect(sql).not.toMatch(/GRANT UPDATE/)
+    for (const modalidade of MODALIDADES_DE_AUSENCIA) {
+      expect(sql).toContain(`(modalidade = '${modalidade}'::text)`)
+    }
   })
 })

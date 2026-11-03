@@ -370,9 +370,12 @@ test.describe('o computador de quem administra', () => {
       await page.getByRole('button', { name: 'Lançar falta justificada' }).click()
       const dialogo = page.getByRole('dialog', { name: 'Lançar falta justificada' })
       await expect(dialogo).toBeVisible()
-      // A mesma falta que o RH da demonstração lançou para o Caio (a caixa não grava).
-      await dialogo.getByLabel('Primeiro dia', { exact: true }).fill(demo.falta.dia)
-      await dialogo.getByLabel('Último dia', { exact: true }).fill(demo.falta.dia)
+      // A mesma falta que o RH da demonstração lançou para o Caio (a caixa não grava):
+      // por dias, o padrão, com a data de início e um dia só.
+      await expect(dialogo.getByRole('radio', { name: 'Por dias' })).toBeChecked()
+      await dialogo.getByLabel('Data de início', { exact: true }).fill(demo.falta.dia)
+      await dialogo.getByLabel('Quantos dias', { exact: true }).fill('1')
+      await expect(dialogo.locator('#ausencia-data-final')).toContainText('(um dia só)')
       await dialogo.getByLabel('Tipo', { exact: true }).selectOption({ label: 'Atestado médico' })
       await dialogo.getByLabel(/^Observação/).fill(demo.falta.observacao)
       const foto = await fotoDoAtestado(browser, 'Caio Mendes', demo.falta.dia)

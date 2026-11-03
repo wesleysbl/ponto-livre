@@ -1,5 +1,5 @@
 /*
- * AS AUSÊNCIAS COM ATESTADO — as regras, os rótulos e a costura com o mês, sem
+ * AS AUSÊNCIAS COM ATESTADO: as regras, os rótulos e a costura com o mês, sem
  * rede e sem React (no banco, `ponto_ausencias` e o bucket dos atestados).
  *
  * O QUE É: o admin lança uma falta justificada: um dia, um período de dias ou
@@ -14,21 +14,32 @@
  * a marca do dia. O abono é outra conta, por cima desta (`saldo.ts`): o
  * atestado médico e a falta justificada abonam a parte da jornada prevista que
  * a ausência cobre e que não foi trabalhada, e nenhuma batida some por isso.
+ * "Outro motivo" só marca o dia.
  *
- * QUEM DECIDE É O BANCO. As regras de `validarLancamento` são as MESMAS do
- * gatilho `ponto_ausencias_guardar`, repetidas aqui para a tela recusar antes
- * de subir o atestado (que, uma vez no bucket, não sai mais). Se as duas
- * divergirem, quem manda é o gatilho, e a tela traduz a recusa:
+ * QUEM DECIDE É O BANCO. As regras de `validarLancamento` e de
+ * `validarRascunhoDoLancamento` são as MESMAS do gatilho
+ * `ponto_ausencias_guardar`, repetidas aqui para a tela recusar antes de subir
+ * o atestado (que, uma vez no bucket, não sai mais). Se as duas divergirem,
+ * quem manda é o gatilho, e a tela traduz a recusa:
  *   • o dia final não vem antes do inicial;
  *   • no máximo 120 dias contando o primeiro e o último;
- *   • de um ano atrás a um ano à frente (366 dias) — o "2062" da digitação;
+ *   • de um ano atrás a um ano à frente (366 dias), o "2062" da digitação;
  *   • `outro` exige observação; observação até 1000 caracteres;
+ *   • por horário: um dia só, as duas horas em minuto exato, o fim depois do
+ *     início; por dias: sem horário;
  *   • cancelar exige motivo, até 500 caracteres.
+ * Duas regras só o banco confere: a sobreposição com outra ausência ativa da
+ * pessoa (intervalos que só se encostam valem) e a da PRÓPRIA AUSÊNCIA: quem é
+ * dono da ausência não a lança nem a cancela, nem o super admin. A tela da
+ * própria ficha não mostra os dois botões (`PainelDaPessoa`), e a recusa, se
+ * chegar, vem traduzida por `faltas.ts`.
  *
  * AUSÊNCIA CANCELADA NÃO MARCA DIA NENHUM. Ela continua guardada (nada se
- * apaga), aparece na lista do admin com quem cancelou e por quê — e some do
+ * apaga), aparece na lista do admin com quem cancelou e por quê, e some do
  * espelho, da folha e do CSV.
  */
+
+import { horaDosMinutos, minutosDaHora } from './jornada'
 
 /* ------------------------------------------------------------------ */
 /* A ausência, como o banco a guarda                                   */
@@ -72,6 +83,9 @@ export interface Ausencia {
   cancelada_por: string | null
   motivo_cancelamento: string | null
 }
+
+/** As duas modalidades, na ordem da tela (por dias primeiro: é o caso comum). */
+export const MODALIDADES_DE_AUSENCIA: readonly ModalidadeDaAusencia[] = ['dias', 'horario']
 
 export const TIPOS_DE_AUSENCIA: readonly TipoDeAusencia[] = [
   'atestado_medico',
@@ -259,6 +273,9 @@ export function juntarDiasEAusencias<D extends { dia: string }>(
  * O tipo `falta_justificada` não repete a palavra ("Falta justificada — falta
  * justificada" não diz nada a mais). O tipo `outro` leva a observação, que o
  * banco exige justamente para "outro" dizer alguma coisa no papel.
+ *
+ * É a marca da FOLHA e do CSV (por `marcaDaAusenciaPorExtenso`). As telas usam
+ * `marcaNoDia`, que diz também o período.
  */
 export function marcaDaAusencia(ausencia: Pick<Ausencia, 'tipo' | 'observacao'>): string {
   switch (ausencia.tipo) {
@@ -271,6 +288,36 @@ export function marcaDaAusencia(ausencia: Pick<Ausencia, 'tipo' | 'observacao'>)
       return observacao ? `Falta justificada — ${observacao}` : 'Falta justificada — outro motivo'
     }
   }
+}
+
+/**
+ * A marca do dia nas TELAS (espelho e painel da pessoa): o tipo e o período,
+ * "Atestado 14:00-16:00" ou "Atestado, dia inteiro". Duas ausências por horário
+ * no mesmo dia viram duas marcas, cada uma com o seu intervalo. O "outro
+ * motivo" leva a observação, que o banco exige justamente para "outro" dizer
+ * alguma coisa.
+ *
+ * O intervalo é escrito com hífen e sem os segundos do banco. A modalidade e as
+ * horas são opcionais no tipo para quem só tem o tipo; a linha do banco sempre
+ * as traz. Por horário sem as duas horas (o CHECK do banco não deixa existir)
+ * cai no "dia inteiro", que ao menos não inventa intervalo.
+ */
+export function marcaNoDia(
+  ausencia: Pick<Ausencia, 'tipo' | 'observacao'> &
+    Partial<Pick<Ausencia, 'modalidade' | 'hora_inicio' | 'hora_fim'>>,
+): string {
+  const rotulo =
+    ausencia.tipo === 'atestado_medico'
+      ? 'Atestado'
+      : ausencia.tipo === 'falta_justificada'
+        ? 'Falta justificada'
+        : 'Outro motivo'
+  const periodo =
+    ausencia.modalidade === 'horario' && ausencia.hora_inicio && ausencia.hora_fim
+      ? ` ${ausencia.hora_inicio.slice(0, 5)}-${ausencia.hora_fim.slice(0, 5)}`
+      : ', dia inteiro'
+  const observacao = ausencia.tipo === 'outro' ? ausencia.observacao?.trim() : null
+  return observacao ? `${rotulo}${periodo}: ${observacao}` : `${rotulo}${periodo}`
 }
 
 /**
@@ -301,11 +348,29 @@ export function atestadoAbreComoLink(caminho: string | null): boolean {
   return Boolean(caminho && /\.(pdf|heic)$/i.test(caminho))
 }
 
-/** "28/10/2026" ou "28/10/2026 a 30/10/2026 (3 dias)". */
-export function descreverPeriodo(ausencia: Pick<Ausencia, 'dia_inicio' | 'dia_fim'>): string {
-  const brasileiro = (dia: string) => `${dia.slice(8, 10)}/${dia.slice(5, 7)}/${dia.slice(0, 4)}`
-  if (ausencia.dia_inicio === ausencia.dia_fim) return brasileiro(ausencia.dia_inicio)
-  return `${brasileiro(ausencia.dia_inicio)} a ${brasileiro(ausencia.dia_fim)} (${duracaoEmDias(ausencia)} dias)`
+/** `2026-10-28` -> "28/10/2026", sem conferir o dia (quem chama já conferiu). */
+function diaBrasileiro(dia: string): string {
+  return `${dia.slice(8, 10)}/${dia.slice(5, 7)}/${dia.slice(0, 4)}`
+}
+
+/**
+ * "28/10/2026", "28/10/2026 a 30/10/2026 (3 dias)" ou, na ausência por horário,
+ * "21/10/2026, das 14:00 às 16:00". É o período da lista das ausências, da
+ * caixa de cancelar e do visor do atestado.
+ *
+ * A modalidade e as horas são opcionais no tipo para quem só tem o período; a
+ * linha do banco sempre as traz. Por horário sem as duas horas (o CHECK do banco
+ * não deixa existir) cai no texto do dia, que ao menos não inventa intervalo.
+ */
+export function descreverPeriodo(
+  ausencia: Pick<Ausencia, 'dia_inicio' | 'dia_fim'> &
+    Partial<Pick<Ausencia, 'modalidade' | 'hora_inicio' | 'hora_fim'>>,
+): string {
+  if (ausencia.modalidade === 'horario' && ausencia.hora_inicio && ausencia.hora_fim) {
+    return `${diaBrasileiro(ausencia.dia_inicio)}, das ${ausencia.hora_inicio.slice(0, 5)} às ${ausencia.hora_fim.slice(0, 5)}`
+  }
+  if (ausencia.dia_inicio === ausencia.dia_fim) return diaBrasileiro(ausencia.dia_inicio)
+  return `${diaBrasileiro(ausencia.dia_inicio)} a ${diaBrasileiro(ausencia.dia_fim)} (${duracaoEmDias(ausencia)} dias)`
 }
 
 /* ------------------------------------------------------------------ */
@@ -347,7 +412,7 @@ export function validarLancamento(entrada: EntradaDoLancamento, hoje: string): R
   const observacao = entrada.observacao.trim()
 
   if (tipo === 'outro' && !observacao) {
-    return { ok: false, erro: 'No tipo “outro motivo”, escreva a observação — é ela que explica a falta na folha.' }
+    return { ok: false, erro: 'No tipo “outro motivo”, escreva a observação: é ela que explica a falta na folha.' }
   }
   if (observacao.length > OBSERVACAO_MAXIMA) {
     return { ok: false, erro: `A observação pode ter no máximo ${OBSERVACAO_MAXIMA} caracteres.` }
@@ -388,11 +453,166 @@ export type ResultadoDoMotivo = { ok: true; motivo: string } | { ok: false; erro
 /** O motivo do cancelamento: obrigatório e com até 500 caracteres, como no banco. */
 export function validarMotivoDoCancelamento(texto: string): ResultadoDoMotivo {
   const motivo = texto.trim()
-  if (!motivo) return { ok: false, erro: 'Escreva o motivo do cancelamento — ele fica guardado com o seu nome.' }
+  if (!motivo) return { ok: false, erro: 'Escreva o motivo do cancelamento: ele fica guardado com o seu nome.' }
   if (motivo.length > MOTIVO_DO_CANCELAMENTO_MAXIMO) {
     return { ok: false, erro: `O motivo pode ter no máximo ${MOTIVO_DO_CANCELAMENTO_MAXIMO} caracteres.` }
   }
   return { ok: true, motivo }
+}
+
+/* ------------------------------------------------------------------ */
+/* O rascunho da tela: por dias ou por horário                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A TELA NÃO DIGITA O DIA FINAL NEM A QUANTIDADE DE HORAS. Por dias, digita-se
+ * a data de início e QUANTOS dias; a data final sai da conta, e a data de
+ * início é o primeiro dia (1 dia = só ela; 3 dias = ela e as duas seguintes,
+ * dias corridos). Por horário, a data e os dois horários; a duração sai da
+ * conta. Assim não há dois números que possam discordar.
+ *
+ * As prévias abaixo são o que a tela mostra enquanto se digita, e o que
+ * `validarRascunhoDoLancamento` confere antes de gravar: a MESMA conta nos dois.
+ * `falta` separa o campo ainda em branco (a tela mostra discreto) do valor que
+ * não vale (a tela mostra em destaque).
+ */
+
+export type Previa<T> = ({ ok: true } & T) | { ok: false; erro: string; falta: boolean }
+
+/**
+ * A data final de uma ausência de `quantidade` dias a partir de `diaInicio`.
+ *
+ * A quantidade é o texto do campo, e só vale número inteiro maior que zero,
+ * escrito só com algarismos: "0", "-1", "1,5", "1.5" e "2 dias" são recusados
+ * (aceitar "1,5" como 1 seria lançar um dia que ninguém pediu). No máximo 120,
+ * o mesmo limite do banco (`PERIODO_MAXIMO_EM_DIAS`), com frase própria.
+ */
+export function previaDosDias(diaInicio: string, quantidade: string): Previa<{ diaFim: string; dias: number }> {
+  if (numeroDoDia(diaInicio) === null) return { ok: false, erro: 'Informe a data de início.', falta: true }
+  const texto = quantidade.trim()
+  if (!texto) return { ok: false, erro: 'Informe a quantidade de dias.', falta: true }
+  if (!/^\d+$/.test(texto) || Number(texto) === 0) {
+    return {
+      ok: false,
+      erro: 'A quantidade de dias tem de ser um número inteiro maior que zero, como 1 ou 3.',
+      falta: false,
+    }
+  }
+  const dias = Number(texto)
+  if (dias > PERIODO_MAXIMO_EM_DIAS) {
+    return {
+      ok: false,
+      erro: `Por dias, o lançamento vai até ${PERIODO_MAXIMO_EM_DIAS} dias, contando a data de início. Para um período maior, lance em partes.`,
+      falta: false,
+    }
+  }
+  return { ok: true, diaFim: somarDias(diaInicio, dias - 1), dias }
+}
+
+/**
+ * O intervalo de uma ausência por horário, dos dois campos `type="time"`.
+ *
+ * O campo entrega `HH:MM` (com `step="60"`); `HH:MM:00` também vale, e sai
+ * como `HH:MM`, que é o que o banco guarda (minuto exato, de 00:00 a 23:59).
+ * O fim tem de vir DEPOIS do início: igual não é intervalo, e antes seria
+ * passar da meia-noite, o que a ausência por horário não faz (é de um dia só).
+ */
+export function previaDoHorario(
+  horaInicio: string,
+  horaFim: string,
+): Previa<{ inicio: string; fim: string; minutos: number }> {
+  const textoInicio = horaInicio.trim()
+  const textoFim = horaFim.trim()
+  if (!textoInicio && !textoFim) return { ok: false, erro: 'Informe o horário inicial e o final.', falta: true }
+  if (!textoInicio) return { ok: false, erro: 'Informe o horário inicial.', falta: true }
+  if (!textoFim) return { ok: false, erro: 'Informe o horário final.', falta: true }
+  const inicio = minutosDaHora(textoInicio)
+  const fim = minutosDaHora(textoFim)
+  if (inicio === null || fim === null || !Number.isInteger(inicio) || !Number.isInteger(fim)) {
+    return { ok: false, erro: 'Use horas e minutos exatos, de 00:00 a 23:59.', falta: false }
+  }
+  if (fim === inicio) {
+    return {
+      ok: false,
+      erro: 'O horário final é igual ao inicial. Informe um intervalo, como das 14:00 às 16:00.',
+      falta: false,
+    }
+  }
+  if (fim < inicio) return { ok: false, erro: 'O horário final tem de ser depois do inicial.', falta: false }
+  return { ok: true, inicio: horaDosMinutos(inicio), fim: horaDosMinutos(fim), minutos: fim - inicio }
+}
+
+/** O que a tela de lançamento tem nos campos, como texto. */
+export interface RascunhoDoLancamento {
+  modalidade: string
+  /** A data de início (por dias) ou a data (por horário), `AAAA-MM-DD`. */
+  dia: string
+  /** Só por dias: o texto do campo de quantidade. */
+  quantidadeDeDias: string
+  /** Só por horário: `HH:MM`. */
+  horaInicio: string
+  horaFim: string
+  tipo: string
+  observacao: string
+}
+
+export type ResultadoDoRascunho =
+  | {
+      ok: true
+      valores: {
+        modalidade: ModalidadeDaAusencia
+        dia_inicio: string
+        dia_fim: string
+        /** `HH:MM` por horário; nulas por dias (o banco recusa horário por dias). */
+        hora_inicio: string | null
+        hora_fim: string | null
+        tipo: TipoDeAusencia
+        observacao: string | null
+      }
+    }
+  | { ok: false; erro: string }
+
+/**
+ * Tudo o que a tela confere antes de subir o atestado: a modalidade, os campos
+ * dela (pelas prévias acima) e, com o período já calculado, as regras de
+ * sempre do gatilho (`validarLancamento`: tipo, observação, 120 dias, janela
+ * de um ano). Os campos da OUTRA modalidade são ignorados: trocar de "Por
+ * horário" para "Por dias" não leva horário nenhum para o banco.
+ *
+ * A sobreposição com outra ausência e a trava da própria ausência continuam
+ * sendo do banco, que responde com a frase traduzida por `faltas.ts`.
+ */
+export function validarRascunhoDoLancamento(rascunho: RascunhoDoLancamento, hoje: string): ResultadoDoRascunho {
+  if (!MODALIDADES_DE_AUSENCIA.includes(rascunho.modalidade as ModalidadeDaAusencia)) {
+    return { ok: false, erro: 'Escolha se a ausência é por dias ou por horário.' }
+  }
+  const modalidade = rascunho.modalidade as ModalidadeDaAusencia
+
+  let diaFim: string
+  let horaInicio: string | null = null
+  let horaFim: string | null = null
+  if (modalidade === 'dias') {
+    const previa = previaDosDias(rascunho.dia, rascunho.quantidadeDeDias)
+    if (!previa.ok) return { ok: false, erro: previa.erro }
+    diaFim = previa.diaFim
+  } else {
+    if (numeroDoDia(rascunho.dia) === null) return { ok: false, erro: 'Informe a data.' }
+    const previa = previaDoHorario(rascunho.horaInicio, rascunho.horaFim)
+    if (!previa.ok) return { ok: false, erro: previa.erro }
+    diaFim = rascunho.dia
+    horaInicio = previa.inicio
+    horaFim = previa.fim
+  }
+
+  const conferido = validarLancamento(
+    { diaInicio: rascunho.dia, diaFim, tipo: rascunho.tipo, observacao: rascunho.observacao },
+    hoje,
+  )
+  if (!conferido.ok) return conferido
+  return {
+    ok: true,
+    valores: { ...conferido.valores, modalidade, hora_inicio: horaInicio, hora_fim: horaFim },
+  }
 }
 
 /* ------------------------------------------------------------------ */

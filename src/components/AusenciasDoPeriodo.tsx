@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Ban, CalendarX2, FileText, X } from 'lucide-react'
+import { Ban, CalendarX2, FileText, Lock, X } from 'lucide-react'
 import {
   descreverPeriodo,
   ehAtiva,
@@ -13,15 +13,20 @@ import { formatarMomento } from '../lib/formato'
 import { Aviso, Botao, Modal } from './ui'
 
 /*
- * AS AUSÊNCIAS DO PERÍODO, UMA POR CARTÃO — no painel da pessoa (com
- * as canceladas e o botão de cancelar) e no espelho do colaborador (só as
- * ativas, sem botão).
+ * AS AUSÊNCIAS DO PERÍODO, UMA POR CARTÃO: no painel da pessoa (com as
+ * canceladas e o botão de cancelar) e no espelho do colaborador (só as ativas,
+ * sem botão).
  *
  * POR QUE UMA LISTA, ALÉM DA MARCA NO DIA: a marca diz "este dia teve falta";
- * o cartão diz a ausência INTEIRA — o período (um atestado de 3 dias é uma
- * ausência só), o tipo, a observação, o atestado, quem lançou e quando. E, se
- * cancelada, quem cancelou, quando e por quê: nada se apaga, e o cancelamento
- * é o único jeito de corrigir (cancela e lança de novo).
+ * o cartão diz a ausência INTEIRA: o período (um atestado de 3 dias é uma
+ * ausência só; a por horário diz o dia e o intervalo), o tipo, a observação, o
+ * atestado, quem lançou e quando. E, se cancelada, quem cancelou, quando e por
+ * quê: nada se apaga, e o cancelamento é o único jeito de corrigir (cancela e
+ * lança de novo).
+ *
+ * NA PRÓPRIA FICHA DE QUEM ESTÁ LOGADO não há botão de cancelar: quem é dono
+ * da ausência não a cancela (a trava é do banco, para todo mundo). A tela
+ * manda o porquê (`porQueSemCancelar`), e ele aparece no lugar dos botões.
  */
 
 interface Props {
@@ -32,9 +37,21 @@ interface Props {
   aoAbrirAtestado: (ausencia: Ausencia) => void
   /** Só para quem administra: abre a caixa de cancelamento. */
   aoCancelar?: (ausencia: Ausencia) => void
+  /**
+   * A frase que explica por que não há "Cancelar" (a própria ficha). Aparece
+   * acima dos cartões quando há ausência ativa; sem ela, a lista não explica.
+   */
+  porQueSemCancelar?: string
 }
 
-export function AusenciasDoPeriodo({ titulo, ausencias, nomeDe, aoAbrirAtestado, aoCancelar }: Props) {
+export function AusenciasDoPeriodo({
+  titulo,
+  ausencias,
+  nomeDe,
+  aoAbrirAtestado,
+  aoCancelar,
+  porQueSemCancelar,
+}: Props) {
   if (ausencias.length === 0) return null
 
   return (
@@ -43,6 +60,12 @@ export function AusenciasDoPeriodo({ titulo, ausencias, nomeDe, aoAbrirAtestado,
         <CalendarX2 size={12} aria-hidden="true" />
         {titulo}
       </h2>
+      {porQueSemCancelar && ausencias.some(ehAtiva) && (
+        <p id="ausencias-sem-cancelar" className="mb-2 flex items-start gap-1.5 text-xs leading-relaxed text-mute">
+          <Lock size={13} aria-hidden="true" className="mt-0.5 shrink-0" />
+          <span>{porQueSemCancelar}</span>
+        </p>
+      )}
       <ul className="grid grid-cols-1 gap-2 lg:grid-cols-2 lg:items-start">
         {ausencias.map((ausencia) => (
           <CartaoDaAusencia
@@ -83,7 +106,7 @@ function CartaoDaAusencia({
       {!ativa && (
         <p className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-warn/35 bg-warn-soft px-1.5 py-0.5 text-[0.62rem] font-medium text-warn">
           <Ban size={10} aria-hidden="true" />
-          cancelada — não marca a folha
+          cancelada: não marca a folha
         </p>
       )}
 

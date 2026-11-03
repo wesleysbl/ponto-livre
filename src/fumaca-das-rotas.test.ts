@@ -2115,9 +2115,65 @@ describe('corrigir qualquer dia: todos os dias na tela da pessoa e "Corrigir pon
     await act(async () => {
       botaoCom(diaDaLista(tela.raiz, '2026-08-17'), 'Lançar falta neste dia')?.click()
     })
-    expect(document.querySelector<HTMLInputElement>('#ausencia-inicio')?.value).toBe('2026-08-17')
-    expect(document.querySelector<HTMLInputElement>('#ausencia-fim')?.value).toBe('2026-08-17')
+    // Por dias, o padrão: a data de início é o dia da linha, e 1 dia acaba nele.
+    expect(document.querySelector<HTMLInputElement>('#ausencia-modalidade-dias')?.checked).toBe(true)
+    expect(document.querySelector<HTMLInputElement>('#ausencia-dia')?.value).toBe('2026-08-17')
+    expect(document.querySelector<HTMLInputElement>('#ausencia-quantidade')?.value).toBe('1')
+    const dataFinal = document.querySelector('#ausencia-data-final')
+    expect(dataFinal).not.toBeNull()
+    expect(textoDe(dataFinal as Element)).toBe('Data final: 17/08/2026 (um dia só)')
     conferirFumaca(tela)
+  })
+
+  /*
+   * A PRÓPRIA FICHA DE QUEM ESTÁ LOGADO. O Sérgio (super admin) abre a tela
+   * dele mesmo: nada de "Lançar falta justificada", de "Lançar falta neste dia"
+   * nem de "Cancelar" na ausência dele (que a Rita lançou), e a frase do porquê
+   * no lugar. A tela da Ana, aberta pela mesma sessão, continua com tudo.
+   */
+  it('na própria ficha, não há como lançar nem cancelar ausência, e a tela diz por quê', async () => {
+    const banco = bancoDeAgosto()
+    entrarComo('admin', {
+      ...banco,
+      ponto_ausencias: [
+        {
+          ...banco.ponto_ausencias[0],
+          id: 'au-sergio',
+          usuario_id: ADMIN.id,
+          dia_inicio: '2026-08-10',
+          dia_fim: '2026-08-10',
+          atestado_path: null,
+          lancado_por: RITA.id,
+        },
+        { ...banco.ponto_ausencias[0], id: 'au-ana', dia_inicio: '2026-08-12', dia_fim: '2026-08-12', atestado_path: null },
+      ],
+    })
+    const porque = 'Quem é dono do ponto não lança nem cancela a própria ausência: outra pessoa que administra o ponto faz isso.'
+
+    const propria = await abrir(`/painel/${ADMIN.id}?de=2026-08-01&ate=2026-08-31`)
+    expect(propria.raiz.querySelector('h1')?.textContent).toBe('Sérgio Almeida')
+    expect(botaoCom(propria.raiz, 'Lançar falta justificada')).toBeUndefined()
+    expect(propria.texto()).not.toContain('Lançar falta neste dia')
+    const explicacao = propria.raiz.querySelector('#propria-ausencia-explicacao')
+    expect(explicacao).not.toBeNull()
+    expect(textoDe(explicacao as Element)).toContain(porque)
+    // O dia vazio continua com o "Inserir": a trava aqui é só a da ausência.
+    expect(textoDe(diaDaLista(propria.raiz, '2026-08-17'))).toContain('Inserir batida neste dia')
+    const lista = propria.raiz.querySelector<HTMLElement>('section[aria-label^="Ausências em"]')
+    expect(lista).not.toBeNull()
+    expect(textoDe(lista as HTMLElement)).toContain('Atestado médico')
+    expect(botaoCom(lista as HTMLElement, 'Cancelar')).toBeUndefined()
+    expect(textoDe(lista as HTMLElement)).toContain(porque)
+    conferirFumaca(propria)
+
+    const daAna = await abrir(`/painel/${ANA.id}?de=2026-08-01&ate=2026-08-31`)
+    expect(botaoCom(daAna.raiz, 'Lançar falta justificada')).toBeDefined()
+    expect(textoDe(diaDaLista(daAna.raiz, '2026-08-17'))).toContain('Lançar falta neste dia')
+    const listaDaAna = daAna.raiz.querySelector<HTMLElement>('section[aria-label^="Ausências em"]')
+    expect(listaDaAna).not.toBeNull()
+    expect(botaoCom(listaDaAna as HTMLElement, 'Cancelar')).toBeDefined()
+    expect(daAna.texto()).not.toContain(porque)
+    conferirFumaca(daAna)
   })
 
   it('para quem administra, "Corrigir ponto" é o primeiro botão do conteúdo, antes de "Bater ponto", com os pedidos esperando', async () => {

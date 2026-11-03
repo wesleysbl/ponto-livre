@@ -12,6 +12,7 @@ import {
   validarMotivoDoCancelamento,
   type Ausencia,
   type ExtensaoDoAtestado,
+  type ModalidadeDaAusencia,
   type TipoDeAusencia,
 } from './ausencias'
 import type { Periodo } from './periodo'
@@ -37,10 +38,12 @@ import type { Periodo } from './periodo'
  *
  * O QUE O GATILHO FAZ SOZINHO, E QUE ESTE MÓDULO NÃO REPETE
  * `ponto_ausencias_guardar` carimba quem lançou e quando, confere período,
- * tipo, sobreposição com outra ausência ativa e — quando há atestado — que o
- * arquivo EXISTE no bucket, no caminho combinado, com o tipo batendo com a
- * extensão. No cancelamento, carimba quem cancelou e quando. Nada disso vai
- * daqui: autor escrito pelo cliente é autor que o cliente pode inventar.
+ * tipo, modalidade, horário, sobreposição com outra ausência ativa e, quando há
+ * atestado, que o arquivo EXISTE no bucket, no caminho combinado, com o tipo
+ * batendo com a extensão. No cancelamento, carimba quem cancelou e quando. Nada
+ * disso vai daqui: autor escrito pelo cliente é autor que o cliente pode
+ * inventar. E recusa, para todo mundo, inclusive o super admin, que o dono da
+ * ausência a lance ou a cancele (a trava da própria ausência).
  */
 
 /**
@@ -62,13 +65,81 @@ const BUCKET = 'ponto-atestados'
 export const SEGUNDOS_DE_VALIDADE_DO_ATESTADO = 120
 
 /**
- * As recusas do gatilho e do storage, pelas frases do banco. O
- * que não é próprio da ausência — sessão, RLS, rede — cai na tradução do
- * painel.
+ * As quatro frases de sobreposição do gatilho: por dias com por dias (a de
+ * sempre), por dias sobre um dia com horário, horário em dia de ausência por
+ * dias, e horários que se cruzam. Todas começam por "Ja existe ausencia" e
+ * voltam com o código 23P01.
+ */
+const SOBREPOSICAO =
+  /Ja existe ausencia (?:ativa desta pessoa em parte deste periodo|de dia inteiro desta pessoa neste dia|por horario desta pessoa)/
+
+/**
+ * As recusas do gatilho e do storage, pelas frases do banco. O que não é
+ * próprio da ausência (sessão, RLS, rede) cai na tradução do painel.
  */
 function traduzirErro(mensagem: string): string {
+  /*
+   * A TRAVA DA PRÓPRIA AUSÊNCIA (42501). O gatilho recusa, para todo mundo,
+   * inclusive o super admin, que o dono da ausência a lance ou a cancele: com o
+   * abono, a ausência em causa própria vira crédito de horas. A tela da própria
+   * ficha nem mostra os dois botões; esta frase é para quem chega aqui mesmo
+   * assim (a lista aberta antes de a conta mudar, ou a API chamada direto). Ela
+   * vem ANTES de toda tradução de 42501: a frase genérica mandaria entrar de
+   * novo, e entrar de novo não resolve.
+   */
+  if (/Quem [eé] dono da aus[eê]ncia n[aã]o lan[cç]a a pr[oó]pria aus[eê]ncia/i.test(mensagem)) {
+    return 'Você não pode lançar ausência para você mesmo: quem é dono do ponto não lança a própria ausência, e isso vale também para quem administra e para o super admin. Peça a outra pessoa que administra o ponto, ou ao super admin.'
+  }
+  if (/Quem [eé] dono da aus[eê]ncia n[aã]o cancela a pr[oó]pria aus[eê]ncia/i.test(mensagem)) {
+    return 'Você não pode cancelar a sua própria ausência: quem é dono do ponto não cancela a própria ausência, e isso vale também para quem administra e para o super admin. Peça a outra pessoa que administra o ponto, ou ao super admin.'
+  }
   if (/Ja existe ausencia ativa desta pessoa em parte deste periodo/.test(mensagem)) {
     return 'Já existe uma ausência lançada para esta pessoa em parte deste período. Para corrigir, cancele a anterior (com motivo) e lance de novo.'
+  }
+  // As três sobreposições da ausência por horário. O banco diz qual ausência
+  // atrapalha (o dia e o intervalo dela); a frase repete isso.
+  if (/Ja existe ausencia de dia inteiro desta pessoa neste dia/.test(mensagem)) {
+    return 'Já existe uma ausência de dia inteiro lançada para esta pessoa neste dia. Para lançar por horário, cancele a anterior (com motivo) e lance de novo.'
+  }
+  const porHorarioNoPeriodo =
+    /Ja existe ausencia por horario desta pessoa em parte deste periodo \(dia ([^,]+), de ([^ ]+) a ([^)]+)\)/.exec(mensagem)
+  if (porHorarioNoPeriodo) {
+    const [, dia, inicio, fim] = porHorarioNoPeriodo
+    return `Já existe uma ausência por horário lançada para esta pessoa neste período (em ${dia}, das ${inicio} às ${fim}). Para lançar por dias, cancele a anterior (com motivo) e lance de novo.`
+  }
+  if (/Ja existe ausencia por horario desta pessoa em parte deste periodo/.test(mensagem)) {
+    return 'Já existe uma ausência por horário lançada para esta pessoa neste período. Para lançar por dias, cancele a anterior (com motivo) e lance de novo.'
+  }
+  const cruzaHorario = /Ja existe ausencia por horario desta pessoa que cruza este horario \(de ([^ ]+) a ([^)]+)\)/.exec(mensagem)
+  if (cruzaHorario) {
+    const [, inicio, fim] = cruzaHorario
+    return `Este horário cruza outra ausência desta pessoa no mesmo dia (das ${inicio} às ${fim}). Horários que só se encostam valem, como 14:00-16:00 e 16:00-16:30.`
+  }
+  if (/Ja existe ausencia por horario desta pessoa que cruza este horario/.test(mensagem)) {
+    return 'Este horário cruza outra ausência desta pessoa no mesmo dia. Horários que só se encostam valem, como 14:00-16:00 e 16:00-16:30.'
+  }
+  if (/Modalidade de ausencia invalida/.test(mensagem)) {
+    return 'Escolha se a ausência é por dias ou por horário.'
+  }
+  if (/Ausencia por dias nao leva horario/.test(mensagem)) {
+    return 'Ausência por dias não leva horário. Para um intervalo do dia, escolha “Por horário”.'
+  }
+  if (/Ausencia por horario exige o horario inicial e o final/.test(mensagem)) {
+    return 'Informe o horário inicial e o final.'
+  }
+  if (/Ausencia por horario e de um dia so/.test(mensagem)) {
+    return 'A ausência por horário é de um dia só: o dia final tem de ser o mesmo do inicial.'
+  }
+  if (/Horario invertido/.test(mensagem)) {
+    return 'O horário final tem de ser depois do inicial.'
+  }
+  if (/Horario fora do formato/.test(mensagem)) {
+    return 'Use horas e minutos exatos, de 00:00 a 23:59.'
+  }
+  // Os dois CHECKs da modalidade só respondem sem o gatilho (que fala antes
+  // deles, com as frases de cima); se aparecerem, em português.
+  if (/ponto_ausencias_modalidade_coerente|ponto_ausencias_horario_no_minuto/.test(mensagem)) {
+    return 'O horário da ausência não vale: por dias, sem horário; por horário, um dia só, com o fim depois do início, em horas e minutos exatos.'
   }
   if (/Periodo invertido/.test(mensagem)) {
     return 'O dia final não pode ser antes do inicial.'
@@ -83,7 +154,7 @@ function traduzirErro(mensagem: string): string {
     return 'Informe o dia inicial e o dia final.'
   }
   if (/Ausencia do tipo outro exige observacao/.test(mensagem)) {
-    return 'No tipo “outro motivo”, escreva a observação — é ela que explica a falta na folha.'
+    return 'No tipo “outro motivo”, escreva a observação: é ela que explica a falta na folha.'
   }
   if (/Tipo de ausencia invalido/.test(mensagem)) {
     return 'Escolha o tipo da ausência.'
@@ -101,10 +172,10 @@ function traduzirErro(mensagem: string): string {
     return 'Esta pessoa não tem conta de login. A ausência precisa ser de uma conta existente.'
   }
   if (/Ausencia ja cancelada/.test(mensagem)) {
-    return 'Esta ausência já foi cancelada — o cancelamento é definitivo. A lista foi atualizada.'
+    return 'Esta ausência já foi cancelada, e o cancelamento é definitivo. A lista foi atualizada.'
   }
   if (/Cancelar ausencia exige motivo/.test(mensagem)) {
-    return 'Escreva o motivo do cancelamento — ele fica guardado com o seu nome.'
+    return 'Escreva o motivo do cancelamento: ele fica guardado com o seu nome.'
   }
   // A tentativa anterior gravou, mas a resposta se perdeu (rede caiu no meio):
   // o mesmo id bate na chave primária. Nada se duplicou.
@@ -370,8 +441,16 @@ export interface DadosDoLancamento {
    */
   id: string
   usuarioId: string
+  /**
+   * Por dias ou por horário. Por horário, `diaInicio` = `diaFim` e as duas
+   * horas em `HH:MM`; por dias, as horas vão NULAS mesmo que cheguem
+   * preenchidas (o gatilho recusaria horário por dias).
+   */
+  modalidade: ModalidadeDaAusencia
   diaInicio: string
   diaFim: string
+  horaInicio: string | null
+  horaFim: string | null
   tipo: TipoDeAusencia
   observacao: string | null
   atestado: AtestadoPronto | null
@@ -384,7 +463,7 @@ export interface DadosDoLancamento {
  * SEM DESCARTE, AO CONTRÁRIO DA SELFIE. O bucket não tem policy de DELETE: o
  * arquivo que subiu e cuja ausência não foi gravada (sobreposição, período
  * errado) FICA. É o preço de "ninguém apaga atestado", e a tela diminui a
- * chance conferindo as regras ANTES de subir (`validarLancamento`).
+ * chance conferindo as regras ANTES de subir (`validarRascunhoDoLancamento`).
  */
 export async function lancarAusencia(dados: DadosDoLancamento): Promise<Ausencia> {
   if (navigator.onLine === false) {
@@ -405,8 +484,11 @@ export async function lancarAusencia(dados: DadosDoLancamento): Promise<Ausencia
     .insert({
       id: dados.id,
       usuario_id: dados.usuarioId,
+      modalidade: dados.modalidade,
       dia_inicio: dados.diaInicio,
       dia_fim: dados.diaFim,
+      hora_inicio: dados.modalidade === 'horario' ? dados.horaInicio : null,
+      hora_fim: dados.modalidade === 'horario' ? dados.horaFim : null,
       tipo: dados.tipo,
       observacao: dados.observacao,
       atestado_path: atestadoPath,
@@ -421,9 +503,11 @@ export async function lancarAusencia(dados: DadosDoLancamento): Promise<Ausencia
      * primária: o gatilho roda antes dela e acha a própria ausência como
      * "sobreposta". Dizer "cancele a anterior" levaria o admin a cancelar a
      * falta certa. Por isso, na sobreposição, olha se a linha deste id já
-     * existe — se existe, foi esta tentativa que gravou, e é sucesso.
+     * existe: se existe, foi esta tentativa que gravou, e é sucesso. Vale para
+     * as quatro frases de sobreposição (`SOBREPOSICAO`): a por horário repetida
+     * acha a própria linha como "horário que cruza".
      */
-    if (/Ja existe ausencia ativa desta pessoa em parte deste periodo/.test(error.message)) {
+    if (SOBREPOSICAO.test(error.message)) {
       const jaGravada = await lerAusenciaPorId(dados.id)
       if (jaGravada) return jaGravada
     }
