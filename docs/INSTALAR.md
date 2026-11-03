@@ -85,7 +85,13 @@ Quem é dono do projeto no painel pode tudo nele. Ligue a verificação em duas 
 
 ## 3. Aplicar a estrutura do banco
 
-A estrutura inteira é um arquivo só: [`supabase/migrations/20261023180000_ponto_livre_estrutura.sql`](../supabase/migrations/20261023180000_ponto_livre_estrutura.sql). Ele cria as 13 tabelas do ponto, as funções, as regras de acesso e os dois buckets privados (selfies e atestados). Precisa do **PostgreSQL 17**: os projetos novos do Supabase já nascem nele. Num banco mais velho, o arquivo para logo no começo, explica o motivo e não muda nada.
+A estrutura são três arquivos, em [`supabase/migrations/`](../supabase/migrations/), aplicados nesta ordem:
+
+1. [`20261023180000_ponto_livre_estrutura.sql`](../supabase/migrations/20261023180000_ponto_livre_estrutura.sql): as 13 tabelas do ponto, as funções, as regras de acesso e os dois buckets privados (selfies e atestados);
+2. [`20261103000043_jornada_e_saldo.sql`](../supabase/migrations/20261103000043_jornada_e_saldo.sql): a jornada da empresa e a de cada ficha, e a data de início do saldo;
+3. [`20261103003912_ausencia_por_horario.sql`](../supabase/migrations/20261103003912_ausencia_por_horario.sql): a ausência por dias ou por horário.
+
+Precisa do **PostgreSQL 17**: os projetos novos do Supabase já nascem nele. Num banco mais velho, o primeiro arquivo para logo no começo, explica o motivo e não muda nada.
 
 ### Opção A: pelo terminal (recomendada)
 
@@ -99,18 +105,19 @@ npx supabase db push
 
 - `login` abre o navegador para você autorizar o terminal na sua conta do Supabase.
 - `link` liga a pasta ao projeto e pede a senha do banco (a do passo 1).
-- `db push` mostra a migration que vai aplicar e pede confirmação. Responda `Y`.
+- `db push` mostra as migrations que vai aplicar, na ordem, e pede confirmação. Responda `Y`.
 
 ### Opção B: pelo SQL Editor
 
 1. No painel do projeto, abra **SQL Editor** e clique em **New query**.
-2. Abra o arquivo `supabase/migrations/20261023180000_ponto_livre_estrutura.sql` num editor de texto, copie o conteúdo inteiro e cole.
+2. Abra o primeiro arquivo, `supabase/migrations/20261023180000_ponto_livre_estrutura.sql`, num editor de texto, copie o conteúdo inteiro e cole.
 3. Clique em **Run**.
+4. Repita com os outros dois, um de cada vez e nesta ordem: `20261103000043_jornada_e_saldo.sql` e depois `20261103003912_ausencia_por_horario.sql`. Cada um confere que o anterior foi aplicado e, se não foi, para e explica.
 
-Se você usou a opção B e um dia for aplicar migrations novas pelo terminal, marque antes esta como aplicada, para o terminal não tentar de novo:
+Se você usou a opção B e um dia for aplicar migrations novas pelo terminal, marque antes as três como aplicadas, para o terminal não tentar de novo:
 
 ```bash
-npx supabase migration repair --status applied 20261023180000
+npx supabase migration repair --status applied 20261023180000 20261103000043 20261103003912
 ```
 
 ### Para conferir
@@ -255,6 +262,7 @@ Em **Authentication › URL Configuration**:
 
 3. Na tela inicial, toque em **Administração** e preencha, embaixo da lista de pessoas, os três blocos: **Local de trabalho**, **Dados da empresa** e **Regras de jornada**. Cada bloco tem o seu botão de salvar.
    O local de trabalho se mede melhor pelo celular, de dentro do local, com **Usar a localização deste aparelho**.
+   Em **Regras de jornada**, troque a jornada de partida (de segunda a sexta, das 08:00 às 12:00 e das 13:00 às 17:00) pelos horários da empresa: é dela que sai o saldo de horas. O que cada regra faz está no [manual](MANUAL.md#a-administração).
 
    ![A administração com o local, os dados da empresa e as regras de jornada preenchidos](imagens/cadastro/05-administracao-empresa-jornada-e-local.png)
 
@@ -269,7 +277,7 @@ Quem prefere tudo no próprio servidor pode, mas por conta própria: este reposi
 
 - **O Supabase:** siga a documentação oficial de [self-hosting com Docker](https://supabase.com/docs/guides/self-hosting/docker). A estrutura do ponto exige o **PostgreSQL 17**, que a pilha oficial já usa por padrão; uma instalação antiga, no 15, precisa antes do [guia de atualização para o Postgres 17](https://supabase.com/docs/guides/self-hosting/postgres-upgrade-17).
 - **O login:** no `.env` da pilha, `DISABLE_SIGNUP=true` fecha o cadastro aberto. Deixe `ENABLE_EMAIL_SIGNUP=true`: apesar do nome, desligá-lo derruba o login por e-mail.
-- **A estrutura:** aplique a migration como o papel `postgres` (pelo SQL Editor do Studio ou com `npx supabase db push --db-url` apontando para o seu banco).
+- **A estrutura:** aplique as migrations de `supabase/migrations/`, na ordem dos nomes, como o papel `postgres` (pelo SQL Editor do Studio ou com `npx supabase db push --db-url` apontando para o seu banco).
 - **A função de contas:** copie a pasta `supabase/functions/ponto-contas` para a pasta de funções da sua instalação, com a verificação de JWT ligada.
 - **O app:** rode `npm run build` com as variáveis e sirva a pasta `dist`. O [`exemplos/servidor/Caddyfile`](../exemplos/servidor/Caddyfile) faz isso com HTTPS automático e os cabeçalhos de segurança das hospedagens. Da política de conteúdo, o cabeçalho dele leva só o `frame-ancestors 'none'`, e o resto chega pela meta do `index.html` e do `404.html`; para ter a política inteira também no cabeçalho, troque o valor pela linha `Content-Security-Policy` do `dist/_headers` do seu build, como dizem os comentários do arquivo.
 - **As cópias de segurança** passam a ser suas, do banco e dos arquivos.
@@ -293,9 +301,30 @@ O plano Pro do Supabase faz cópia diária automática. Mais detalhes na [docume
 ## Atualizar para uma versão nova
 
 1. Leia a entrada da versão no [CHANGELOG.md](../CHANGELOG.md).
-2. Aplique as migrations novas: `npx supabase db push`.
+2. **Aplique as migrations novas antes de publicar o app**: `npx supabase db push`. O app novo lê as colunas que as migrations criam e, sem elas, não carrega os dados. O app antigo, guardado no celular de alguém, continua funcionando com o banco novo, então a ordem certa é sempre esta: primeiro o banco, depois o app.
 3. Se a função de contas mudou: `npx supabase functions deploy ponto-contas`.
 4. Publique o app de novo (o build sai do código novo).
+
+### Se você aplicou a estrutura pelo SQL Editor
+
+Quem aplicou a estrutura pela [opção B](#opção-b-pelo-sql-editor) e nunca marcou o histórico do terminal tem um banco que o terminal não conhece: o `db push` tentaria aplicar a estrutura de novo, e ela recusaria. Escolha um dos dois caminhos:
+
+- **Pelo terminal:** marque antes, como aplicadas, as migrations que você já rodou à mão, e depois rode o `db push`. Para quem só aplicou a estrutura:
+
+  ```bash
+  npx supabase migration repair --status applied 20261023180000
+  npx supabase db push
+  ```
+
+- **Pelo SQL Editor:** cole e rode cada migration nova, uma de cada vez, na ordem dos nomes (a data no começo). Para a versão da jornada e do saldo, são duas, nesta ordem: `20261103000043_jornada_e_saldo.sql` e depois `20261103003912_ausencia_por_horario.sql`. Cada uma confere que a anterior está aplicada e que ela mesma ainda não foi: rodar de novo, ou fora de ordem, para com a explicação e não muda nada.
+
+### Depois da atualização que trouxe a jornada e o saldo
+
+A migration da jornada montou a jornada da empresa a partir da carga diária que estava gravada: de segunda a sexta, das 08:00 às 12:00 e, à tarde, das 13:00 até completar a carga (com carga de até 4h, um bloco só, a partir das 08:00). A carga é a mesma de antes, e o saldo do dia sai certo desde o primeiro dia, mas os horários são aproximados. Na administração, em **Regras de jornada**:
+
+1. **Confira os horários da jornada** e ajuste à jornada de verdade da empresa. Até lá, a marca de atraso pode sair errada, e o atestado por horário só abona a parte que cai dentro desses horários; o saldo dos outros dias não muda, porque depende do total do dia. Com carga entre 4h01 e 4h59, a tarde nasce com menos de uma hora.
+2. **Confira a "Saldo calculado a partir de".** Ela nasceu com o dia em que a migration rodou, e nenhum dia antes dela é cobrado: é o que impede a data da ficha, que pode ser a admissão de anos atrás, de criar faltas nos meses de antes. Para cobrar desde o começo do mês, recue a data.
+3. Em **Pessoas**, preencha a **Passou a bater ponto aqui em** de quem ainda não tem (sem ela, nenhum dia da pessoa é cobrado) e dê a jornada própria a quem trabalha em outro horário.
 
 ## Se der problema
 
@@ -310,6 +339,8 @@ O plano Pro do Supabase faz cópia diária automática. Mais detalhes na [docume
 | "A função de contas (ponto-contas) não está publicada no Supabase…" | Faça o passo 4. |
 | A câmera ou o GPS dizem que só funcionam em conexão segura | Abra o app pelo endereço com `https://`. |
 | A estrutura recusa: "Estrutura do ponto nao aplicada: o banco e PostgreSQL…" | O projeto é de uma versão antiga do Postgres. Crie um projeto novo (já nasce no 17). |
+| Depois de publicar a versão nova, o app não carrega os dados (no console do navegador, uma coluna que não existe, como `jornada` ou `modalidade`) | O app novo foi publicado antes das migrations. Aplique as migrations novas ([Atualizar para uma versão nova](#atualizar-para-uma-versão-nova)); não precisa publicar o app de novo. |
+| O `db push` tenta aplicar a estrutura num banco que já a tem | A estrutura foi aplicada pelo SQL Editor, e o terminal não sabe. Veja [Se você aplicou a estrutura pelo SQL Editor](#se-você-aplicou-a-estrutura-pelo-sql-editor). |
 
 ## Conferência de segurança
 

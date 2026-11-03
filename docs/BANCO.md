@@ -2,7 +2,15 @@
 
 [Voltar ao README](../README.md)
 
-A estrutura inteira é uma migration só, no formato do Supabase CLI: [`supabase/migrations/20261023180000_ponto_livre_estrutura.sql`](../supabase/migrations/20261023180000_ponto_livre_estrutura.sql). Ela cria **13 tabelas, 50 funções, 38 gatilhos, 33 regras de acesso** (27 nas tabelas e 6 nos arquivos) e **2 buckets privados**, sem nenhuma linha de dado, e tira os privilégios padrão do que o `postgres` criar depois. Roda como `postgres`, sem superusuário, e exige o PostgreSQL 17.
+O banco são três migrations, no formato do Supabase CLI, aplicadas nesta ordem:
+
+| Migration | O que faz |
+| --- | --- |
+| [`20261023180000_ponto_livre_estrutura.sql`](../supabase/migrations/20261023180000_ponto_livre_estrutura.sql) | a estrutura: **13 tabelas, 50 funções, 38 gatilhos, 33 regras de acesso** (27 nas tabelas e 6 nos arquivos) e **2 buckets privados**, sem nenhuma linha de dado, e tira os privilégios padrão do que o `postgres` criar depois |
+| [`20261103000043_jornada_e_saldo.sql`](../supabase/migrations/20261103000043_jornada_e_saldo.sql) | a jornada da empresa e a própria, a data de início do saldo e a trava da própria ficha: **5 funções, 3 gatilhos, 3 restrições e 3 colunas** |
+| [`20261103003912_ausencia_por_horario.sql`](../supabase/migrations/20261103003912_ausencia_por_horario.sql) | a ausência por dias ou por horário e a trava da própria ausência: **3 colunas e 2 restrições**, e a função guardiã das ausências trocada pela nova (a mesma função, com o mesmo gatilho) |
+
+Depois das três, o banco tem **13 tabelas, 55 funções, 41 gatilhos, 33 regras de acesso e 2 buckets**. Cada migration roda como `postgres`, sem superusuário, e exige o PostgreSQL 17. Nenhuma delas se edita depois de publicada: mudança nova é migration nova ([Como mudar a estrutura](#como-mudar-a-estrutura)).
 
 O princípio é um só: **quem recusa é o banco**. O app esconde o que não serve a cada papel, mas não é a trava: quem administra e abre o próprio ponto no painel ainda vê **Corrigir** e **Inserir batida**, e quem recusa é o banco. O porquê está na [defesa](DEFESA.md#11-quem-recusa-é-o-banco-não-a-tela).
 
@@ -29,10 +37,10 @@ Toda regra de acesso se apoia em quatro perguntas, sempre sobre a sessão de que
 | `ponto_correcoes` | a trilha de toda mudança numa batida: a linha antes e depois, o motivo, o autor e a natureza (`admin` ou `sistema`) | a pessoa (as dela) e quem administra | só o gatilho da correção. Permanente |
 | `ponto_registros_apagados` | a linha inteira de uma batida que uma operação de manutenção apagou, com o motivo | quem administra | só o gatilho do apagamento. Permanente |
 | `ponto_pedidos_atraso` | os pedidos de batida esquecida: o horário declarado, o motivo, a selfie, o local e a decisão | a pessoa (os dela) e quem administra | a pessoa pela função `ponto_pedir_batida_em_atraso`; quem administra decide pela `ponto_decidir_pedido_atraso`. Não se apaga |
-| `ponto_ausencias` | as faltas justificadas, com o atestado | a pessoa (as dela) e quem administra | quem administra lança e cancela (só o cancelamento muda, uma vez, com motivo). Não se apaga |
-| `ponto_funcionarios` | a ficha de RH: nome completo, CPF, matrícula, cargo, admissão, desligamento, CTPS, centro de custo e a conta ligada | a pessoa (a própria) e quem administra | quem administra. Liberar o ponto para uma conta (ligar a ficha ativa, reativar, tirar o desligamento) é só do super admin. Não se apaga |
+| `ponto_ausencias` | as ausências (atestado médico, falta justificada e outro motivo), por dias ou por horário, com o atestado | a pessoa (as dela) e quem administra | quem administra lança e cancela (só o cancelamento muda, uma vez, com motivo), menos a ausência da própria conta. Não se apaga |
+| `ponto_funcionarios` | a ficha de RH: nome completo, CPF, matrícula, cargo, admissão, desligamento, CTPS, centro de custo, a data em que a pessoa passou a bater ponto, a jornada própria e a conta ligada | a pessoa (a própria) e quem administra | quem administra. Liberar o ponto para uma conta (ligar a ficha ativa, reativar, tirar o desligamento) é só do super admin. A jornada própria e a data da ficha ligada à própria conta, ninguém grava. Não se apaga |
 | `ponto_local` | o local de trabalho: coordenada, raio, quem mediu e quando. No máximo um ativo | quem entra no ponto (`ponto_ator_aprovado()`); a conta sem ficha e sem papel, não | quem administra. Local com batidas não se apaga |
-| `ponto_configuracao` | uma linha só: os dados da empresa (o cabeçalho da folha) e as regras de jornada | quem entra no ponto (`ponto_ator_aprovado()`); a conta sem ficha e sem papel, não | quem administra |
+| `ponto_configuracao` | uma linha só: os dados da empresa (o cabeçalho da folha), a jornada da empresa, as regras de jornada e a data de início do saldo | quem entra no ponto (`ponto_ator_aprovado()`); a conta sem ficha e sem papel, não | quem administra |
 | `ponto_pin` | o hash bcrypt do PIN, as tentativas erradas, o bloqueio, os bloqueios do dia e o pedido de redefinir | ninguém pelo app | só as funções do PIN |
 | `ponto_pin_tentativas` | o histórico das tentativas de PIN | ninguém pelo app | só as funções do PIN |
 | `ponto_admins` | quem administra o ponto, quem concedeu, quando e por quê | quem administra | só o super admin (conceder e revogar). O último não sai |
@@ -53,6 +61,47 @@ Toda regra de acesso se apoia em quatro perguntas, sempre sobre a sessão de que
 | `ajuste_manual`, `motivo_ajuste` | a marca de ajuste (não se desliga) e o motivo do lançamento ou da última correção |
 | `funcionario_nome`, `funcionario_email` | a fotografia do nome e do e-mail na hora da batida. Não se corrigem: são prova |
 | `pedido_atraso_id` | o pedido aprovado de onde a batida nasceu, quando é o caso |
+
+## A jornada, o saldo e a ausência por horário
+
+O banco guarda o que o saldo precisa; a conta do saldo é do app, na leitura, numa função pura ([`src/lib/saldo.ts`](../src/lib/saldo.ts)). Nada de saldo fica gravado: cancelar uma ausência ou mudar a jornada refaz o saldo na próxima leitura.
+
+| Coluna | O que guarda |
+| --- | --- |
+| `ponto_configuracao.jornada` | a jornada da empresa (jsonb, obrigatória): uma lista de blocos `{"dia": 1, "inicio": "08:00", "fim": "12:00"}`, com o dia de 1 (segunda) a 7 (domingo) e os horários em HH:MM de Brasília. Dia que não aparece não tem jornada. A linha que nasce pela tela vem com a jornada de partida: de segunda a sexta, das 08:00 às 12:00 e das 13:00 às 17:00 |
+| `ponto_configuracao.carga_diaria_minutos` | a carga diária, que deixou de ser digitada: o banco a calcula da jornada da empresa (`ponto_jornada_carga_de_referencia`, o maior total de um dia) em todo INSERT e UPDATE, por cima do número que vier. A coluna fica porque o app antigo, guardado no celular de alguém, ainda a lê e a manda |
+| `ponto_configuracao.saldo_a_partir_de` | o primeiro dia em que o saldo é cobrado (date, obrigatória). Nasce com o dia de Brasília em que a linha nasce; na atualização, com o dia em que a migration rodou |
+| `ponto_funcionarios.jornada` | a jornada própria da pessoa, no mesmo formato. Nula = segue a da empresa |
+| `ponto_funcionarios.bate_ponto_desde` | a "Passou a bater ponto aqui em". Não libera nem bloqueia a batida; com `saldo_a_partir_de`, decide o primeiro dia cobrado da pessoa: a mais nova das duas. Nula = nenhum dia cobrado |
+| `ponto_ausencias.modalidade` | `dias` (o padrão, e o de toda ausência lançada antes da migration) ou `horario` |
+| `ponto_ausencias.hora_inicio`, `hora_fim` | o intervalo da ausência por horário (time, de Brasília), no dia `dia_inicio`. Nulas na ausência por dias |
+
+**As regras da jornada** (`ponto_jornada_problema`, chamada pelos CHECKs e pelo gatilho, que devolve a frase do primeiro erro):
+
+- a lista não é vazia; cada bloco tem `dia`, `inicio` e `fim`, e nada mais;
+- o dia é um inteiro de 1 a 7, e os horários estão em HH:MM, de 00:00 a 23:59;
+- o fim vem depois do início (bloco de duração zero também é recusado);
+- no máximo dois blocos por dia, sem se cruzar (encostar pode: 08:00-12:00 e 12:00-17:00);
+- cada dia com jornada soma de 60 a 720 minutos (de 1h a 12h).
+
+A jornada própria vazia (`[]`) é recusada de propósito: "seguir a da empresa" é a coluna nula. Os CHECKs `ponto_configuracao_jornada_valida`, `ponto_configuracao_carga_da_jornada` (a carga é sempre a da jornada) e `ponto_funcionarios_jornada_valida` seguram as regras mesmo sem os gatilhos; os gatilhos `trg_ponto_configuracao_jornada` e `trg_ponto_funcionarios_jornada` conferem, ordenam os blocos e recalculam a carga, com a frase do motivo.
+
+**A jornada de quem já tinha o ponto.** Na atualização, a linha da configuração que já existia ganhou a jornada montada da carga gravada (`ponto_jornada_da_carga`): de segunda a sexta, das 08:00 às 12:00 e, à tarde, das 13:00 até completar a carga; com carga de até 4h, um bloco só, das 08:00 até completar. A carga continuou exatamente a mesma, e a migration confere isso no fim. Os horários são aproximados até alguém conferir a jornada na tela.
+
+**As regras da ausência por horário** (no gatilho `ponto_ausencias_guardar`, com frase própria, e nos CHECKs `ponto_ausencias_modalidade_coerente` e `ponto_ausencias_horario_no_minuto`):
+
+- por dias não leva horário; por horário leva as duas horas e é de um dia só (`dia_fim` igual a `dia_inicio`);
+- o fim vem depois do início, em minuto exato, de 00:00 a 23:59;
+- duas ausências ativas da mesma pessoa não cobrem o mesmo tempo: por dias contra por dias, períodos que dividem um dia; por horário num dia coberto por uma ausência por dias, e o contrário; e dois intervalos no mesmo dia que se cruzam. Intervalos que só se encostam valem (14:00-16:00 e 16:00-16:30). As canceladas não contam.
+
+As ausências lançadas antes da migration passaram a ler `dias` e as duas horas nulas, sem mudar nada nelas: a migration confere, linha a linha, que elas ficaram iguais.
+
+**As duas travas novas**, para todo mundo com sessão, inclusive o super admin, com o código 42501 da trava da batida:
+
+- **a da própria ficha** (`ponto_funcionarios_guardar_propria_ficha`, no gatilho `trg_ponto_funcionarios_propria_ficha`): ninguém muda a jornada própria nem a `bate_ponto_desde` da ficha ligada à própria conta, nem cria a própria ficha já com elas, nem liga a si uma ficha que já as tem. A ficha dos outros continua com quem administra, e a jornada da empresa também, porque vale para todos;
+- **a da própria ausência** (na `ponto_ausencias_guardar`): ninguém lança ausência para a própria conta nem cancela a própria ausência. Editar uma ausência é cancelar e lançar de novo, então as duas ficam com outra pessoa que administra.
+
+As duas existem pelo mesmo motivo da trava da batida: a jornada, a data e a ausência decidem o saldo da pessoa, e com o abono a ausência em causa própria viraria crédito. O porquê está na [defesa](DEFESA.md#21-ninguém-decide-o-próprio-ponto).
 
 ## As funções que o app chama
 
@@ -119,17 +168,18 @@ Os dois são privados: toda leitura passa pelas regras de acesso, e o app abre c
 
 - O pedido não se corrige (horário, motivo, selfie e local são a prova), é decidido uma vez só, e só a aprovação liga uma batida a ele. Um pedido aprovado sem batida não chega a existir.
 - Cada pessoa tem no máximo 4 pedidos pendentes no mesmo dia. Quando quem administra decide um, a fila anda.
-- A ausência confere o tipo, o período (até 120 dias, numa janela de um ano para trás e um para frente), a sobreposição com outra ausência ativa e o atestado no bucket, com o tipo do arquivo batendo com a extensão.
+- A ausência confere o tipo, a modalidade (por dias ou por horário), o período (até 120 dias, numa janela de um ano para trás e um para frente), o horário, a sobreposição com outra ausência ativa e o atestado no bucket, com o tipo do arquivo batendo com a extensão. Ninguém lança nem cancela a própria ausência, nem o super admin.
 
 **Pessoas e acesso**
 
 - Só o super admin libera o ponto por uma ficha. Cada conta tem no máximo uma ficha, e o CPF é único entre as fichas ativas.
+- Ninguém muda a jornada própria nem a data "Passou a bater ponto aqui em" da ficha ligada à própria conta, nem o super admin.
 - As listas de administradores e de super admins não se esvaziam, não se transferem para outra conta e guardam quem concedeu e quando.
 
 **O local e a configuração**
 
 - Mudar a coordenada ou o raio carimba quem mediu e quando. Mudar o local não reescreve batida antiga.
-- A configuração é uma linha só, com faixas conferidas: carga diária de 1h a 12h, tolerância de 0 a 60 minutos, janela de 10 a 900 segundos, CNPJ com 14 dígitos e UF com 2 letras.
+- A configuração é uma linha só, com faixas conferidas: a jornada da empresa válida (as regras acima), a carga diária igual à da jornada (de 1h a 12h), tolerância de 0 a 60 minutos, janela de 10 a 900 segundos, CNPJ com 14 dígitos e UF com 2 letras.
 
 **Privilégios**
 
@@ -138,10 +188,11 @@ Os dois são privados: toda leitura passa pelas regras de acesso, e o app abre c
 - `anon` não tem privilégio nenhum. As regras de acesso são só para `authenticated`, e as dos arquivos filtram pelo bucket do ponto.
 - Toda função tem `search_path` fixo. As `SECURITY DEFINER` conferem a sessão antes do papel.
 
-**A partida e o fim da migration**
+**A partida e o fim de cada migration**
 
-- Antes da primeira mudança, a migration confere o PostgreSQL 17, o login e o storage do Supabase, os papéis, o `postgres` e a extensão `pgcrypto`. Faltou algo, ela para e explica.
-- No fim, confere as contagens (13, 50, 38, 33 e 2), a RLS em toda tabela, que `anon` não tem nada, que a trilha de contas recusa senha e que os privilégios padrão não dão nada a `anon`, `authenticated` nem `PUBLIC`. Se algo não bater, nada fica.
+- Antes da primeira mudança, a da estrutura confere o PostgreSQL 17, o login e o storage do Supabase, os papéis, o `postgres` e a extensão `pgcrypto`. Faltou algo, ela para e explica.
+- No fim, a da estrutura confere as contagens dela (13, 50, 38, 33 e 2), a RLS em toda tabela, que `anon` não tem nada, que a trilha de contas recusa senha e que os privilégios padrão não dão nada a `anon`, `authenticated` nem `PUBLIC`. Se algo não bater, nada fica.
+- As duas que vêm depois conferem, na partida, que a anterior está aplicada e que elas ainda não foram (quem roda de novo pelo SQL Editor recebe a frase, e não um erro no meio do caminho). No fim, a da jornada confere as colunas, a jornada de partida, as restrições, os gatilhos, os privilégios das funções novas e que toda carga aceita vira uma jornada válida com a mesma carga; a da ausência por horário confere as ausências antigas linha a linha, as colunas, as restrições, o gatilho e os privilégios.
 
 ## Os testes de banco
 
@@ -150,22 +201,24 @@ Ficam em [`supabase/testes/`](../supabase/testes/) e rodam no Supabase local com
 | Arquivo | O que prova |
 | --- | --- |
 | `acesso.sql` | o super admin, as listas de administração e o acesso pela ficha |
+| `ausencia_por_horario.sql` | a ausência por dias ou por horário: as regras da modalidade, a sobreposição (encostar vale, cruzar não) e a trava da própria ausência, para quem administra e para o super admin |
 | `ausencias.sql` | as ausências com atestado: o lançamento, as recusas e o cancelamento |
 | `batida_esquecida.sql` | o pedido de batida esquecida, a decisão e a reorganização do dia |
 | `blindagem.sql` | a batida que não se apaga, a correção com motivo e trilha, o canal do sistema |
 | `estrutura.sql` | o catálogo (contagens, privilégios, RLS, donos) e o contrato de acesso com o app |
+| `jornada_e_saldo.sql` | a jornada (as regras, a carga calculada, a jornada montada das cargas de 3h a 12h), a data do saldo e a trava da própria ficha, para quem administra e para o super admin |
 | `local.sql` | o local à prova de erro e o carimbo de quem mediu |
 | `trava_de_futuro.sql` | a recusa do horário no futuro |
 | `trilha_de_contas.sql` | a trilha da função de contas, sem senha e permanente |
 
-Além deles, o `npm test` lê as migrations como texto ([`src/banco.test.ts`](../src/banco.test.ts)) e confere, em cada uma, as regras que toda peça segue: `REVOKE` antes de `GRANT`, RLS ligada, `search_path` fixo, nada para `anon`. Na da estrutura, confere também as contagens do cabeçalho e do fim.
+Além deles, o `npm test` lê as migrations como texto ([`src/banco.test.ts`](../src/banco.test.ts)) e confere, em cada uma, as regras que toda peça segue: `REVOKE` antes de `GRANT`, RLS ligada, `search_path` fixo, nada para `anon`. Confere também que as contagens de `estrutura.sql` batem com o que as migrations criam, somadas, e que as travas da própria ficha e da própria ausência decidem pela sessão, sem exceção de papel.
 
 ## Como mudar a estrutura
 
 1. **Crie uma migration nova**: `npx supabase migration new <nome>`. Nunca edite a que já existe: as instalações já a aplicaram, e o CLI não aplica de novo.
 2. **Siga as regras da casa**: `ENABLE ROW LEVEL SECURITY` em toda tabela nova; `REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role` e depois `GRANT` só do necessário (com os privilégios padrão revogados, uma tabela ou função nova sem `GRANT` fica fora do alcance do app); regras de acesso só `TO authenticated`; `SET search_path` fixo em toda função; nas `SECURITY DEFINER`, a sessão (`auth.uid()`) antes do papel; comentários em português contando o porquê.
 3. **Teste no Supabase local**: `npm run db:zerar` recria o banco aplicando todas as migrations; depois, `npm run db:testar`. Acrescente casos em `supabase/testes/`. Um arquivo novo segue o molde dos outros: o `src/banco.test.ts` confere que todo arquivo da pasta abre com `BEGIN`, termina em `ROLLBACK` e transforma qualquer FALHOU em erro.
-4. **Atualize as contagens**: as constantes do começo de `supabase/testes/estrutura.sql` (tabelas, funções, gatilhos, regras e buckets) passam a contar o banco depois de todas as migrations.
-5. **Ajuste a conferência das contagens na primeira migration nova que mude as contagens.** As regras de segurança do `src/banco.test.ts` (a transação do CLI, nenhuma troca de papel, `REVOKE` antes de `GRANT`, RLS ligada e nunca desligada, `search_path` fixo, nada para `anon` nem `PUBLIC`, regras só `TO authenticated`) já valem para toda migration de `supabase/migrations/`, em ordem: a nova passa por elas sem mudar nada no teste. As contagens, não: o teste compara as constantes de `estrutura.sql` só com o que a migration da estrutura cria. Uma migration nova que mude essas contagens (uma tabela, função, gatilho, regra de acesso ou bucket a mais ou a menos, ou uma função nova para o app) faz essa comparação reprovar depois do passo 4. Estenda-a para somar o que todas as migrations da pasta criam.
+4. **Atualize as contagens**: as constantes do começo de `supabase/testes/estrutura.sql` (tabelas, funções, gatilhos, regras e buckets, e as listas de privilégios por tabela, por coluna e de funções que o app chama) passam a contar o banco depois de todas as migrations.
+5. **Confira com o `npm test`.** As regras de segurança do `src/banco.test.ts` (a transação do CLI, nenhuma troca de papel, `REVOKE` antes de `GRANT`, RLS ligada e nunca desligada, `search_path` fixo, nada para `anon` nem `PUBLIC`, regras só `TO authenticated`) valem para toda migration de `supabase/migrations/`, em ordem, e o teste soma o que todas criam para comparar com as contagens de `estrutura.sql`. Uma migration que crie uma peça e esqueça a contagem, ou o contrário, reprova aqui, antes de chegar a um banco. Uma função trocada com `CREATE OR REPLACE` não conta como nova.
 6. **Se uma tela passa a chamar uma RPC nova**, ponha-a no Supabase simulado de `src/fumaca-das-rotas.test.ts`. Se a assinatura de `ponto_registrar_batida` ou de `ponto_pedir_batida_em_atraso` mudar, mude junto o contrato conferido em `estrutura.sql` e o app (que pode estar guardado no celular de alguém, numa versão anterior).
 7. **Na nuvem**: `npx supabase db push`.
