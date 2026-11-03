@@ -7,7 +7,7 @@ import { RAIZ, hojeNoPonto, rodarComoPostgres } from './apoio.ts'
 /*
  * OS PRINTS DA DEMONSTRAÇÃO: `npm run demo:prints`.
  *
- * Grava em `docs/imagens/` as 18 telas que o README e o manual mostram, e a
+ * Grava em `docs/imagens/` as 20 telas que o README e o manual mostram, e a
  * capa do README, com as pessoas fictícias e o mês de batidas de
  * `demo/semear.mjs`. Roda só com DEMO_PRINTS=1, que `demo/prints.mjs` liga
  * (ver `playwright.config.ts`): o `npm run e2e` de sempre não passa por aqui.
@@ -15,14 +15,18 @@ import { RAIZ, hojeNoPonto, rodarComoPostgres } from './apoio.ts'
  * ANTES: `npm run demo:semear -- --zerar`. O roteiro não cria nada no banco
  * fora o que a tela faz de verdade: a Ana bate a entrada de hoje (o
  * comprovante sai de uma batida real, com o horário do servidor), e as caixas
- * de corrigir e de lançar falta são preenchidas e canceladas. Por isso ele
+ * de corrigir e de lançar falta (por dias e por horário) são preenchidas e
+ * canceladas. Por isso ele
  * recusa um banco em que a Ana já bateu hoje: a tela de bater precisa da
  * primeira batida do dia. Rodar de novo é semear de novo.
  *
  * OS HORÁRIOS DE HOJE SÃO OS DO RELÓGIO. O comprovante, o espelho e o pedido
  * de batida esquecida mostram a hora em que os prints rodaram (o horário é
  * sempre o do servidor, e isso não se finge). Para prints com cara de dia de
- * trabalho, rode os dois comandos num dia útil, em horário comercial.
+ * trabalho, rode os dois comandos num dia útil, em horário comercial. No
+ * GitHub, a automação "Prints da documentação" põe o relógio da máquina
+ * inteira (o banco junto) no dia útil anterior, às 9h30 de Brasília, antes
+ * das provas e da semente: ver `.github/workflows/prints.yml`.
  *
  * O QUE CADA PRINT MOSTRA está no `docs/MANUAL.md` e no README, ao lado de
  * cada imagem. Os tamanhos:
@@ -83,6 +87,8 @@ interface Demonstracao {
   diaIncompleto: string
   /** A falta do Caio, para a caixa de lançar falta repetir o que o RH lançou. */
   falta: { dia: string; observacao: string }
+  /** O atestado por horário do Gustavo, para a caixa repetir o que o RH lançou. */
+  atestadoPorHorario: { dia: string; das: string; ate: string; observacao: string }
 }
 
 const hoje = hojeNoPonto()
@@ -99,15 +105,18 @@ function lerDemonstracao(): Demonstracao {
           WHERE u.email = '${EMAIL.daniela}' AND r.dia_civil < '${hoje}'
           GROUP BY r.dia_civil HAVING count(*) % 2 = 1) d),
       (SELECT a.dia_inicio || '~' || a.observacao FROM public.ponto_ausencias a JOIN auth.users u ON u.id = a.usuario_id
-        WHERE u.email = '${EMAIL.caio}' AND a.cancelada_em IS NULL ORDER BY a.dia_inicio LIMIT 1),
+        WHERE u.email = '${EMAIL.caio}' AND a.modalidade = 'dias' AND a.cancelada_em IS NULL ORDER BY a.dia_inicio LIMIT 1),
+      (SELECT a.dia_inicio || '~' || to_char(a.hora_inicio, 'HH24:MI') || '~' || to_char(a.hora_fim, 'HH24:MI') || '~' || a.observacao
+         FROM public.ponto_ausencias a JOIN auth.users u ON u.id = a.usuario_id
+        WHERE u.email = '${EMAIL.gustavo}' AND a.modalidade = 'horario' AND a.cancelada_em IS NULL ORDER BY a.dia_inicio LIMIT 1),
       (SELECT count(*) FROM public.ponto_registros r JOIN auth.users u ON u.id = r.usuario_id
         WHERE u.email = '${EMAIL.ana}' AND r.dia_civil = '${hoje}'),
       (SELECT count(*) FROM public.ponto_pedidos_atraso WHERE estado = 'pendente');
   `).trim()
-  const [contas, mes, diaIncompleto, falta, batidasDeHojeDaAna, pendentes] = linha.split('|')
+  const [contas, mes, diaIncompleto, falta, porHorario, batidasDeHojeDaAna, pendentes] = linha.split('|')
 
   const ids = Object.fromEntries((contas || '').split(',').filter(Boolean).map((par) => par.split('=')).map(([email, id]) => [email, id]))
-  const semDemonstracao = Object.values(EMAIL).some((email) => !ids[email]) || !mes || !diaIncompleto || !falta
+  const semDemonstracao = Object.values(EMAIL).some((email) => !ids[email]) || !mes || !diaIncompleto || !falta || !porHorario
   if (semDemonstracao) {
     throw new Error('A demonstração não está no banco local. Rode antes: npm run demo:semear -- --zerar')
   }
@@ -120,6 +129,7 @@ function lerDemonstracao(): Demonstracao {
 
   const [ano, numero] = mes.split('-').map(Number)
   const [diaDaFalta, observacao] = falta.split('~')
+  const [diaDoExame, das, ate, observacaoDoExame] = porHorario.split('~')
   return {
     mes,
     inicio: `${mes}-01`,
@@ -127,6 +137,7 @@ function lerDemonstracao(): Demonstracao {
     ids: Object.fromEntries(Object.entries(EMAIL).map(([chave, email]) => [chave, ids[email]])) as Demonstracao['ids'],
     diaIncompleto,
     falta: { dia: diaDaFalta, observacao },
+    atestadoPorHorario: { dia: diaDoExame, das, ate, observacao: observacaoDoExame },
   }
 }
 
@@ -255,15 +266,17 @@ const caixaDo = (dialogo: Locator) => dialogo.locator(':scope > div > div').firs
  * O atestado fictício de `demo/atestado.html` como uma foto de celular: grande
  * (2700×3600, JPEG de alta qualidade), como a câmera entrega. É o que a caixa
  * de lançar falta recebe, e o app a reduz no aparelho antes de subir — a caixa
- * mostra "reduzida de … para …", o caso de todo dia.
+ * mostra "reduzida de … para …", o caso de todo dia. `horario`, no atestado
+ * por horário ("das 08:00 às 10:00"), como o papel que a semente desenhou.
  */
-async function fotoDoAtestado(navegador: Browser, nome: string, dia: string): Promise<Buffer> {
+async function fotoDoAtestado(navegador: Browser, nome: string, dia: string, horario?: string): Promise<Buffer> {
   const contexto = await navegador.newContext({ viewport: { width: 900, height: 1200 }, deviceScaleFactor: 3 })
   try {
     const papel = await contexto.newPage()
     const endereco = new URL(pathToFileURL(join(RAIZ, 'demo', 'atestado.html')).href)
     endereco.searchParams.set('nome', nome)
     endereco.searchParams.set('dia', dia.split('-').reverse().join('/'))
+    if (horario) endereco.searchParams.set('horario', horario)
     await papel.goto(endereco.href)
     return await papel.screenshot({ type: 'jpeg', quality: 92 })
   } finally {
@@ -300,7 +313,7 @@ test.describe('o computador de quem administra', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
   precisarDoBanco()
 
-  test('o RH: o painel, os dias de uma pessoa, a correção, o pedido, a falta e a folha', async ({ page, browser }) => {
+  test('o RH: o painel, os dias de uma pessoa, a correção, o pedido, as faltas por dias e por horário e a folha', async ({ page, browser }) => {
     const erros = vigiar(page)
     const periodo = `de=${demo.inicio}&ate=${demo.fim}`
     /** O cabeçalho da página (a seta de voltar e a marca): a largura da coluna do conteúdo. */
@@ -389,6 +402,34 @@ test.describe('o computador de quem administra', () => {
       await expect(dialogo).toBeHidden()
     })
 
+    await test.step('atestado-por-horario: a mesma caixa, por horário, com a data, o intervalo e a duração', async () => {
+      const exame = demo.atestadoPorHorario
+      await page.goto(`/painel/${demo.ids.gustavo}?${periodo}`)
+      await expect(page.getByRole('heading', { name: 'Gustavo Ramos' })).toBeVisible()
+      await page.getByRole('button', { name: 'Lançar falta justificada' }).click()
+      const dialogo = page.getByRole('dialog', { name: 'Lançar falta justificada' })
+      await expect(dialogo).toBeVisible()
+      // O atestado que o RH da demonstração lançou para o Gustavo (a caixa não grava).
+      // O rádio de verdade fica escondido atrás do segmento: o clique é no texto, como na tela.
+      await dialogo.getByText('Por horário', { exact: true }).click()
+      await expect(dialogo.getByRole('radio', { name: 'Por horário' })).toBeChecked()
+      await dialogo.getByLabel('Data', { exact: true }).fill(exame.dia)
+      await dialogo.getByLabel('Das', { exact: true }).fill(exame.das)
+      await dialogo.getByLabel('Até', { exact: true }).fill(exame.ate)
+      await expect(dialogo.locator('#ausencia-duracao')).toHaveText('Duração: 2h00')
+      await dialogo.getByLabel('Tipo', { exact: true }).selectOption({ label: 'Atestado médico' })
+      await dialogo.getByLabel(/^Observação/).fill(exame.observacao)
+      const foto = await fotoDoAtestado(browser, 'Gustavo Ramos', exame.dia, `das ${exame.das} às ${exame.ate}`)
+      await dialogo
+        .locator('input[type="file"]:not([capture])')
+        .setInputFiles({ name: 'atestado-gustavo.jpg', mimeType: 'image/jpeg', buffer: foto })
+      await expect(dialogo.getByText('atestado-gustavo.jpg')).toBeVisible()
+      await expect(dialogo.getByText(/^reduzida de /)).toBeVisible()
+      await guardar(page, 'atestado-por-horario', { recorte: caixaDo(dialogo) })
+      await dialogo.getByRole('button', { name: 'Cancelar', exact: true }).click()
+      await expect(dialogo).toBeHidden()
+    })
+
     await test.step('folha: a folha do mês para imprimir e assinar', async () => {
       await page.goto(`/folha/${demo.ids.gustavo}?mes=${demo.mes}`)
       await expect(page.getByRole('button', { name: 'Imprimir ou salvar em PDF' })).toBeVisible()
@@ -399,7 +440,7 @@ test.describe('o computador de quem administra', () => {
     expect(erros).toEqual([])
   })
 
-  test('o super admin: a administração, as pessoas e o local de trabalho', async ({ page }) => {
+  test('o super admin: a administração, as pessoas, a jornada e o local de trabalho', async ({ page }) => {
     const erros = vigiar(page)
     const cabecalho = page.locator('header').first()
 
@@ -420,6 +461,15 @@ test.describe('o computador de quem administra', () => {
 
     await test.step('pessoas: a lista, com conta, ficha, administração e PIN', async () => {
       await guardar(page, 'pessoas', { recorte: page.locator('#secao-pessoas'), margem: 12 })
+    })
+
+    await test.step('jornada-da-empresa: o editor da semana, a tolerância e a data do saldo', async () => {
+      const secao = page.locator('#secao-jornada')
+      // A jornada e a data que a semente gravou: segunda das 8h às 12h e das 13h às 17h, saldo desde o dia 1º.
+      await expect(secao.locator('#jornada-empresa-1-0-inicio')).toHaveValue('08:00')
+      await expect(secao.locator('#jornada-empresa-1-1-fim')).toHaveValue('17:00')
+      await expect(secao.getByLabel('Saldo calculado a partir de', { exact: true })).toHaveValue(demo.inicio)
+      await guardar(page, 'jornada-da-empresa', { recorte: secao, margem: 12 })
     })
 
     await test.step('local-de-trabalho: o formulário do local', async () => {

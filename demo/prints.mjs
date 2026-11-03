@@ -9,7 +9,7 @@
  * sem o `VAR=1 comando` do shell — e repassa o que vier depois de `--` ao
  * Playwright (`npm run demo:prints -- --headed`, por exemplo).
  *
- * NO FIM, A CONFERÊNCIA DAS IMAGENS: as 19 existem e são desta execução, e
+ * NO FIM, A CONFERÊNCIA DAS IMAGENS: as 21 existem e são desta execução, e
  * cada PNG traz só imagem (os blocos IHDR, IDAT e IEND, sem texto nem data
  * escondidos). A lista é a das imagens que a documentação cita. Numa execução
  * parcial (com argumentos, como `-- --grep capa`, que refaz só a capa), as
@@ -40,9 +40,11 @@ const IMAGENS = [
   'corrigir-batida',
   'pedido-pendente',
   'falta-com-atestado',
+  'atestado-por-horario',
   'folha',
   'administracao',
   'pessoas',
+  'jornada-da-empresa',
   'local-de-trabalho',
 ]
 
