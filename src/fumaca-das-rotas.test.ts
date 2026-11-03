@@ -134,6 +134,8 @@ const simulado = vi.hoisted(() => {
      */
     aceitarEscritas: false,
     aceitas: [] as string[],
+    /** O que cada escrita aceita mandou, na ordem (a fumaça confere o que a ficha grava). */
+    dadosAceitos: [] as { metodo: string; tabela: string; dados: unknown }[],
     /**
      * Enquanto não for nula, as leituras de lista esperam esta promessa — para
      * o teste afirmar o que está na tela DURANTE a releitura, que com tudo
@@ -232,6 +234,7 @@ const simulado = vi.hoisted(() => {
                 return construtor
               }
               estado.aceitas.push(`${String(nome)} em ${tabela}`)
+              estado.dadosAceitos.push({ metodo: String(nome), tabela, dados })
               if (nome === 'insert' && tabela === 'ponto_registros') {
                 const inserida = inserirBatida(dados as Record<string, unknown>)
                 filtros.push((linha) => linha === inserida)
@@ -674,6 +677,7 @@ beforeEach(() => {
   simulado.estado.loginAceito = null
   simulado.estado.aceitarEscritas = false
   simulado.estado.aceitas = []
+  simulado.estado.dadosAceitos = []
   simulado.estado.segurarLeituras = null
   for (const nivel of ['error', 'warn'] as const) {
     vi.spyOn(console, nivel).mockImplementation((...args: unknown[]) => {
@@ -1304,6 +1308,52 @@ describe('a administração diz o que a jornada e a data fazem no saldo', () => 
     expect(daAna.querySelector<HTMLSelectElement>('#ficha-jornada-origem')?.value).toBe('empresa')
     expect(textoDaAna).toContain('A jornada da empresa, hoje:')
     expect(textoDaAna).toContain('08:00-12:00 e 13:00-17:00')
+    conferirFumaca(tela)
+  })
+
+  /** Clica em "Salvar a ficha" na caixa aberta e espera a gravação assentar. */
+  async function salvarAFicha(caixa: HTMLElement) {
+    const salvar = [...caixa.querySelectorAll('button')].find((botao) => (botao.textContent ?? '').includes('Salvar a ficha'))
+    expect(salvar, '"Salvar a ficha"').toBeDefined()
+    await act(async () => {
+      salvar?.click()
+    })
+    await assentar()
+  }
+
+  /*
+   * Os ids do simulado ("u-admin") não passam na validação da ficha, que exige
+   * o uuid que o banco usa. Para GRAVAR a ficha, o admin e a Ana ganham uuids
+   * no banco simulado e na sessão.
+   */
+  const UUID_DO_ADMIN = '00000000-0000-4000-8000-0000000000a1'
+  const UUID_DA_ANA = '00000000-0000-4000-8000-0000000000a2'
+  function comUuids(banco: Record<string, Linha[]>): Record<string, Linha[]> {
+    return JSON.parse(
+      JSON.stringify(banco).replaceAll(`"${ADMIN.id}"`, `"${UUID_DO_ADMIN}"`).replaceAll(`"${ANA.id}"`, `"${UUID_DA_ANA}"`),
+    ) as Record<string, Linha[]>
+  }
+
+  it('salvar a própria ficha pela lista não manda a jornada nem a data; salvar a de outra pessoa manda as duas', async () => {
+    entrarComo('admin', comUuids(bancoComFichaDoAdmin()))
+    simulado.estado.sessao = { user: { id: UUID_DO_ADMIN, email: ADMIN.email } }
+    simulado.estado.aceitarEscritas = true
+    const tela = await abrir('/administracao')
+
+    await salvarAFicha(await editarAFichaDe(tela.raiz, ADMIN.email))
+    expect(tela.texto()).toContain('Ficha de Sérgio Almeida salva.')
+    await salvarAFicha(await editarAFichaDe(tela.raiz, ANA.email))
+    expect(tela.texto()).toContain('Ficha de Ana Souza salva.')
+
+    const fichas = simulado.estado.dadosAceitos.filter((escrita) => escrita.tabela === 'ponto_funcionarios')
+    expect(fichas.map((escrita) => escrita.metodo)).toEqual(['update', 'update'])
+    const [daPropria, daAna] = fichas.map((escrita) => escrita.dados as Record<string, unknown>)
+    // A própria: o cadastro vai, a jornada e a data não (o banco recusa que o dono as mude).
+    expect(daPropria).toMatchObject({ usuario_id: UUID_DO_ADMIN, nome_completo: 'Sérgio Almeida', cargo: 'Diretor' })
+    expect(daPropria).not.toHaveProperty('jornada')
+    expect(daPropria).not.toHaveProperty('bate_ponto_desde')
+    // A de outra pessoa: as duas vão, a jornada nula ("usar a da empresa").
+    expect(daAna).toMatchObject({ usuario_id: UUID_DA_ANA, bate_ponto_desde: '2026-09-04', jornada: null })
     conferirFumaca(tela)
   })
 })
