@@ -20,7 +20,7 @@
 # COMO SE ACIONA, E POR QUE DE DOIS JEITOS
 # A automação não roda sozinha: nem em push, nem em pull request aberto ou
 # atualizado. Ela é pesada (baixa as imagens do Supabase inteiro e leva uns
-# 15 minutos), e só serve quando as telas mudam.
+# 4 minutos), e só serve quando as telas mudam.
 #   • O botão "Run workflow", na aba Actions (`workflow_dispatch`). O GitHub
 #     só aciona assim um workflow que já está no branch padrão (ver
 #     "workflow_dispatch" em "Events that trigger workflows", na documentação
@@ -84,9 +84,10 @@ jobs:
     # O botão da aba Actions, ou o rótulo `prints` (ver o topo).
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'prints'
     runs-on: ubuntu-latest
-    # Baixar as imagens do Supabase leva alguns minutos; as provas, a semente
-    # e os prints, uns dez. Um passo travado não pode segurar o runner pelas 6
-    # horas do limite padrão.
+    # Subir o Supabase (com o download das imagens) leva perto de um minuto e
+    # meio; as provas, a semente e os prints, outro tanto. O limite tem folga
+    # para um runner lento, mas um passo travado não pode segurar o runner
+    # pelas 6 horas do limite padrão.
     timeout-minutes: 45
 
     permissions:
