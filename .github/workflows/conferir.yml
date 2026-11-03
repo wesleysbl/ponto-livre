@@ -1,12 +1,15 @@
 # ---------------------------------------------------------------------------
 # CONFERIR EM TODO PUSH E EM TODO PULL REQUEST
 #
-# Dois trabalhos, em paralelo. Nenhum publica nada nem usa segredo.
+# Três trabalhos, em paralelo. Nenhum publica nada nem usa segredo.
 #   • conferir: falha conhecida nas dependências de produção, lint, teste de
 #     fumaça das rotas, testes, contagem de testes do README e build;
 #   • banco: sobe o banco de um Supabase local dentro do runner, aplica a
 #     migration e roda os testes de banco (`npm run db:testar`), a mesma prova
-#     que quem desenvolve roda na própria máquina.
+#     que quem desenvolve roda na própria máquina;
+#   • segredos: o gitleaks, numa versão presa e com a soma conferida, varre o
+#     histórico inteiro do repositório (todos os commits de todos os branches,
+#     e não só o último) e reprova com qualquer achado.
 #
 # POR QUE SEM SEGREDOS
 # Conferir não precisa falar com o Supabase hospedado nem com a hospedagem. Os
@@ -16,14 +19,18 @@
 # compilar. Por isso o `dist/` que sai daqui não serve para publicar, e não é
 # guardado. O `banco` sobe um Supabase descartável no próprio runner, com as
 # credenciais locais padrão do CLI, que não abrem nada fora dele (e que o
-# passo não imprime). Sem segredo, o workflow roda igual em pull request vindo
-# de fork, que o GitHub não deixa ler segredo nenhum.
+# passo não imprime). O `segredos` baixa o gitleaks do release público dele,
+# sem login. Sem segredo, o workflow roda igual em pull request vindo de fork,
+# que o GitHub não deixa ler segredo nenhum.
 #
 # O QUE NÃO PASSA POR AQUI
-# O `tsc -b` do build só enxerga `src/` (e, por ela, os módulos puros da Edge
-# Function que os testes importam). O lint lê as Edge Functions com o bloco do
-# Deno do `eslint.config.js`. A Edge Function em si não roda no CI: o `banco`
-# sobe só o banco, e os testes dele falam SQL direto com ele.
+# O `tsc -b` do build confere os tipos de `src/` (e, por ela, dos módulos puros
+# da Edge Function que os testes importam) e de `e2e/`, sem rodar os testes de
+# ponta a ponta. O lint lê as Edge Functions com o bloco do Deno do
+# `eslint.config.js`. A Edge Function em si não roda aqui: o `banco` sobe só o
+# banco, e os testes dele falam SQL direto com ele. A função, o app no Chrome e
+# as provas de ponta a ponta rodam na automação "Prints da documentação"
+# (`prints.yml`), que só roda quando alguém pede.
 # ---------------------------------------------------------------------------
 name: Conferir
 
@@ -155,3 +162,51 @@ jobs:
         # linhas OK, nenhum FALHOU, o ROLLBACK no fim de cada arquivo e o banco
         # igual antes e depois de todos.
         run: npm run db:testar
+
+  segredos:
+    # Uma chave, um token ou uma senha esquecidos em QUALQUER commit, e não só
+    # no último: o repositório é público, e um commit velho continua baixável
+    # depois de o arquivo sair do topo. O gitleaks lê o histórico inteiro.
+    runs-on: ubuntu-latest
+    # Baixar o histórico e varrer levam segundos. Um passo travado não pode
+    # segurar o runner pelas 6 horas do limite padrão.
+    timeout-minutes: 10
+
+    # Só leitura: este trabalho não escreve nada no repositório.
+    permissions:
+      contents: read
+
+    steps:
+      - name: Baixar o código, com o histórico inteiro
+        uses: actions/checkout@v4
+        with:
+          # 0 = todos os commits de todos os branches e tags, e não só o
+          # último (o padrão do checkout). É o que o gitleaks varre.
+          fetch-depth: 0
+
+      - name: Baixar o gitleaks, com a soma conferida
+        # A versão fica presa aqui: um release novo do gitleaks só entra com
+        # alguém trocando as duas linhas do `env`. A soma SHA-256 é a do
+        # arquivo de checksums do próprio release
+        # (gitleaks_8.30.1_checksums.txt); se o pacote baixado não bater com
+        # ela, o passo para antes de abrir o pacote. A mesma versão e a mesma
+        # soma estão em `prints.yml`: troque as duas juntas.
+        env:
+          VERSAO: 8.30.1
+          SOMA: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          pacote="gitleaks_${VERSAO}_linux_x64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$pacote" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VERSAO}/${pacote}"
+          echo "${SOMA}  $RUNNER_TEMP/$pacote" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$pacote" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" version
+
+      - name: Procurar segredos no histórico inteiro
+        # `gitleaks git` sem `--log-opts` lê `git log --all --full-history`:
+        # todos os commits que o checkout trouxe. Cada achado sai com o
+        # arquivo, o commit e a regra, e o valor tapado (`--redact`); qualquer
+        # achado sai com 1 e reprova o trabalho. Uma exceção, se um dia houver
+        # falso positivo, vai num `.gitleaks.toml` na raiz (o gitleaks o lê
+        # sozinho), a mais estreita possível e com o porquê escrito.
+        run: '"$RUNNER_TEMP/gitleaks" git --redact --no-banner --verbose --exit-code 1 .'
