@@ -203,6 +203,13 @@ interface ComoGuardar {
   margem?: number
   /** A página toda, rolando. */
   inteira?: boolean
+  /**
+   * O recorte é a caixa de um diálogo: ela fica presa no meio da janela e
+   * rola por dentro, e a página inteira não a mostraria inteira (o fundo da
+   * página aparece onde a caixa continua). Quando ela não cabe, a janela
+   * cresce só para este print, até caber a caixa com a margem, e volta depois.
+   */
+  crescer?: boolean
 }
 
 /**
@@ -211,7 +218,11 @@ interface ComoGuardar {
  * sendo digitado perde o foco: nenhum botão sai com a cor de "passando por cima", e
  * nenhum campo com o contorno de quem está digitando.
  */
-async function guardar(pagina: Page, nome: string, { recorte, coluna, margem = 24, inteira = false }: ComoGuardar = {}): Promise<void> {
+async function guardar(
+  pagina: Page,
+  nome: string,
+  { recorte, coluna, margem = 24, inteira = false, crescer = false }: ComoGuardar = {},
+): Promise<void> {
   const caminho = join(PASTA, `${nome}.png`)
   await pagina.mouse.move(0, 0)
   await pagina.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
@@ -244,7 +255,19 @@ async function guardar(pagina: Page, nome: string, { recorte, coluna, margem = 2
   const x = Math.max(0, Math.floor(esquerda - margem))
   const largura = Math.min(janela.width - x, Math.ceil(direita - esquerda + 2 * margem))
   const altura = Math.ceil(baixo - topo + 2 * margem)
-  if (topo - margem >= 0 && baixo + margem <= janela.height) {
+  const cabe = topo - margem >= 0 && baixo + margem <= janela.height
+  if (crescer && !cabe) {
+    // A caixa fica no meio da janela maior, com a folga do diálogo em volta, e
+    // o print sai pelo caminho de quem cabe.
+    await pagina.setViewportSize({ width: janela.width, height: altura + 64 })
+    try {
+      await guardar(pagina, nome, { recorte, margem })
+    } finally {
+      await pagina.setViewportSize(janela)
+    }
+    return
+  }
+  if (cabe) {
     // Cabe na janela: o recorte é da tela como ela está (as caixas fixas ficam onde estão).
     await pagina.screenshot({ path: caminho, clip: { x, y: Math.floor(topo - margem), width: largura, height: altura }, animations: 'disabled' })
     return
@@ -371,7 +394,7 @@ test.describe('o computador de quem administra', () => {
         .getByLabel(/^Motivo/)
         .fill('Saiu para o almoço às 12h e só lembrou de bater alguns minutos depois; horário confirmado com a supervisora.')
       await expect(dialogo.getByRole('button', { name: new RegExp(`^Mudar de ${hora} para 12:00`) })).toBeVisible()
-      await guardar(page, 'corrigir-batida', { recorte: caixaDo(dialogo) })
+      await guardar(page, 'corrigir-batida', { recorte: caixaDo(dialogo), crescer: true })
       // Só o print: a caixa fecha sem gravar.
       await dialogo.getByRole('button', { name: 'Cancelar', exact: true }).click()
       await expect(dialogo).toBeHidden()
@@ -397,7 +420,7 @@ test.describe('o computador de quem administra', () => {
         .setInputFiles({ name: 'atestado-caio.jpg', mimeType: 'image/jpeg', buffer: foto })
       await expect(dialogo.getByText('atestado-caio.jpg')).toBeVisible()
       await expect(dialogo.getByText(/^reduzida de /)).toBeVisible()
-      await guardar(page, 'falta-com-atestado', { recorte: caixaDo(dialogo) })
+      await guardar(page, 'falta-com-atestado', { recorte: caixaDo(dialogo), crescer: true })
       await dialogo.getByRole('button', { name: 'Cancelar', exact: true }).click()
       await expect(dialogo).toBeHidden()
     })
@@ -425,7 +448,7 @@ test.describe('o computador de quem administra', () => {
         .setInputFiles({ name: 'atestado-gustavo.jpg', mimeType: 'image/jpeg', buffer: foto })
       await expect(dialogo.getByText('atestado-gustavo.jpg')).toBeVisible()
       await expect(dialogo.getByText(/^reduzida de /)).toBeVisible()
-      await guardar(page, 'atestado-por-horario', { recorte: caixaDo(dialogo) })
+      await guardar(page, 'atestado-por-horario', { recorte: caixaDo(dialogo), crescer: true })
       await dialogo.getByRole('button', { name: 'Cancelar', exact: true }).click()
       await expect(dialogo).toBeHidden()
     })
