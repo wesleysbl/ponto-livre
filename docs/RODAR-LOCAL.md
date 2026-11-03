@@ -98,7 +98,7 @@ npm run demo:prints              # os prints das telas e a capa, em docs/imagens
 
 Os dois só falam com o Supabase local (a semente recusa uma API que não seja de `127.0.0.1` ou `localhost`) e precisam do Google Chrome, que desenha as selfies e tira os prints. Sem o `--zerar`, a semente só roda num banco que ainda não tem as contas da demonstração.
 
-A semente cria a Empresa Exemplo Ltda, o local de trabalho e estas contas, todas com a mesma senha e o mesmo PIN de demonstração:
+A semente cria a Empresa Exemplo Ltda (com a jornada de segunda a sexta, das 8h às 12h e das 13h às 17h, e o saldo calculado a partir do dia 1º do mês), o local de trabalho e estas contas, todas com a mesma senha e o mesmo PIN de demonstração:
 
 | E-mail | Quem | Papel |
 | --- | --- | --- |
@@ -112,9 +112,11 @@ A semente cria a Empresa Exemplo Ltda, o local de trabalho e estas contas, todas
 
 A senha e o PIN são públicos de propósito e valem só para este banco local: nunca os use num ponto de verdade.
 
-O mês de batidas são os dias úteis do mês corrente até ontem (no começo do mês, o mês anterior inteiro), com os casos que as telas mostram: uma batida sem localização, batidas fora do local, uma correção e uma inserção do RH com motivo, um dia incompleto, uma falta com atestado e um pedido de batida esquecida esperando decisão. As pessoas, os e-mails (`example.com`), as selfies desenhadas e o atestado são todos fictícios. Como cada batida histórica entra no banco está explicado no cabeçalho de [`demo/semear.mjs`](../demo/semear.mjs).
+O mês de batidas são os dias úteis do mês corrente até ontem (no começo do mês, o mês anterior inteiro), sem sábado, domingo e os feriados nacionais que o app conta, com os casos que as telas mostram: uma batida sem localização, batidas fora do local, uma correção e uma inserção do RH com motivo, um dia incompleto, uma falta com atestado por dias, um atestado por horário de duas horas, uma falta sem atestado (que o saldo cobra) e um pedido de batida esquecida esperando decisão. O Gustavo tem jornada própria (até as 18h de segunda a quinta), e os outros seguem a da empresa. As pessoas, os e-mails (`example.com`), as selfies desenhadas e o atestado são todos fictícios. Como cada batida histórica entra no banco está explicado no cabeçalho de [`demo/semear.mjs`](../demo/semear.mjs).
 
 O `npm run demo:prints` bate de verdade a entrada de hoje da Ana (o comprovante mostra o horário do servidor, na hora em que ele roda): para tirar os prints de novo, semeie de novo. Para prints com cara de dia de trabalho, rode os dois num dia útil, em horário comercial.
+
+**Sem Docker na sua máquina?** A automação "Prints da documentação" ([`.github/workflows/prints.yml`](../.github/workflows/prints.yml)) faz tudo isso no GitHub, quando alguém pede (o botão "Run workflow" da aba Actions, ou o rótulo `prints` num pull request): sobe o Supabase local no runner, roda o `PRINTS=1 npm run e2e` numa instalação vazia, semeia a demonstração do zero e roda o `npm run demo:prints`. Antes, ela põe o relógio do runner no dia útil anterior, às 9h30 de Brasília, para as telas saírem com cara de dia de trabalho a qualquer hora. As imagens saem num pacote da execução ("prints-da-documentacao"), para baixar, conferir uma por uma e commitar. Leva uns 4 minutos.
 
 ## Os testes
 
@@ -123,7 +125,7 @@ O `npm run demo:prints` bate de verdade a entrada de hoje da Ana (o comprovante 
 | `npm test` | os testes do Vitest: regras, telas, a função de contas contra um Supabase simulado, o teste de fumaça das rotas e os testes estáticos da migration | nada (sem rede e sem banco) |
 | `npm run test:fumaca` | só o teste de fumaça: o app inteiro montado num navegador simulado, rota por rota | nada |
 | `npm run lint` | o ESLint | nada |
-| `npm run db:testar` | os 8 arquivos de [`supabase/testes/`](../supabase/testes/), cada um numa transação desfeita no fim, e a conferência de que nada ficou gravado | o Supabase local de pé |
+| `npm run db:testar` | os 10 arquivos de [`supabase/testes/`](../supabase/testes/), cada um numa transação desfeita no fim, e a conferência de que nada ficou gravado | o Supabase local de pé |
 | `npm run db:testar -- blindagem.sql` | só os arquivos citados | o Supabase local de pé |
 | `npm run e2e` | de ponta a ponta no Chrome, em dois projetos: o `app` passa pelo cadastro inteiro, da instalação vazia à primeira batida, e pela função de contas pelo caminho real; o `csp` faz o build de produção e abre o app inteiro sob a política de conteúdo, sem nenhuma recusa no console | o Supabase local e o Chrome |
 | `PRINTS=1 npm run e2e` | o mesmo, gravando um print por passo em [`docs/imagens/cadastro/`](imagens/cadastro/) | idem |
@@ -134,6 +136,7 @@ Detalhes que ajudam:
 - O `npm run e2e` sobe o app sozinho, de dois jeitos, cada um numa porta só dele: o servidor de desenvolvimento na 5180 (o projeto `app`) e o build de produção, servido pelo `vite preview`, na 5181 (o projeto `csp`, que só roda o `e2e/csp.spec.ts`; esse build vai para a pasta temporária do sistema, e não para `dist/`). Os dois apontam para o Supabase local, com a câmera e o GPS simulados. O teste cria contas e batidas no banco local a cada execução, com uma marca no e-mail, e não grava nada na pasta do projeto. Para usar o Edge ou outro navegador da família do Chrome: `PLAYWRIGHT_CHANNEL=msedge npm run e2e`.
 - O `npm run dev` roda sem a política de conteúdo (a recarga a quente do Vite precisa de script em linha). Mexeu na política ([`src/lib/politica-de-conteudo.ts`](../src/lib/politica-de-conteudo.ts)), no `index.html` ou no `vite.config.ts`? Rode o `npm run e2e`: é o projeto `csp` que confere o app sob a política, no navegador.
 - Antes de `PRINTS=1 npm run e2e`, rode `npm run db:zerar`: com o banco de execuções anteriores, as listas mostram as pessoas delas também.
+- A preparação do `npm run e2e` confere que o banco local tem as migrations todas aplicadas. Se ele recusar, rode `npm run db:zerar`.
 - A contagem de testes escrita no README é conferida por `node scripts/conferir-readme.mjs`, também no CI. Teste novo, linha nova.
 
 ## Parar e recomeçar

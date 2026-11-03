@@ -24,7 +24,8 @@ npm run dev
 - **Português** no código, nos comentários, nos testes e nas telas.
 - **Comentário explica o porquê**: a regra, o risco, a escolha e o que se troca por ela. O que a linha faz, o código já diz.
 - **Regras puras em `src/lib/`**, sem React e sem Supabase, com o teste ao lado (`algo.ts` e `algo.test.ts`). A tela desenha; a decisão mora no módulo.
-- **Uma conta de horas só**: `src/lib/horas.ts`. O espelho, o painel, o CSV e a folha usam as mesmas funções. Não some horas em outro lugar.
+- **Uma conta de horas só**: `src/lib/horas.ts` soma as batidas, e `src/lib/saldo.ts` faz o saldo por cima delas (o previsto, o abono, o atraso, a falta, o saldo do dia e o resumo do mês), com a jornada em `src/lib/jornada.ts`. O espelho, o painel, o CSV e a folha usam as mesmas funções. Não some horas nem calcule saldo em outro lugar.
+- **O saldo é puro e sem relógio**: nada de React, Supabase ou `new Date()` em `saldo.ts`; o "hoje" chega como parâmetro. As regras de cada pessoa (a jornada, a tolerância e o primeiro dia cobrado) se montam só em `regrasDoSaldo`, que nenhuma tela refaz à mão. Mudou a conta? O teste mora ao lado, em `src/lib/saldo.test.ts`, com a data, a jornada e as batidas escritas no próprio caso. Os feriados nacionais vêm de `src/lib/feriados.ts`, e a cópia em JavaScript de `demo/feriados.mjs` (da semente e da automação dos prints) muda junto: `src/lib/feriados.test.ts` compara as duas.
 - **A tela não é segurança.** Toda regra que importa mora no banco (RLS, gatilhos e funções). Esconder um botão é conveniência.
 - **Rota nova** em `src/App.tsx` entra também em `public/_redirects`, `vercel.json` e `exemplos/servidor/Caddyfile`. O `src/hospedagem.test.ts` confere as quatro listas.
 - **RPC nova** chamada por uma tela entra no Supabase simulado do teste de fumaça (`src/fumaca-das-rotas.test.ts`), ou ele reprova.
@@ -36,7 +37,8 @@ npm run dev
 - **Tabela nova:** `ENABLE ROW LEVEL SECURITY`, `REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role` e, depois, `GRANT` só do que o app usa. Nada para `anon`. Regra de acesso só `TO authenticated`.
 - **Função nova:** `SET search_path` fixo, `REVOKE ALL` e `GRANT EXECUTE` explícitos. Se for `SECURITY DEFINER`, confira a sessão (`auth.uid()`) antes do papel.
 - **Teste em `supabase/testes/`**, no mesmo molde dos que existem (abre com `BEGIN`, termina em `ROLLBACK`, pessoas sintéticas com e-mail em `example.invalid`), rodado por `npm run db:testar`.
-- **As contagens** de `supabase/testes/estrutura.sql` mudam junto. Veja [`docs/BANCO.md`](docs/BANCO.md#como-mudar-a-estrutura), que diz também o ajuste que `src/banco.test.ts` precisa na primeira migration nova.
+- **As contagens** de `supabase/testes/estrutura.sql` mudam junto, e o `src/banco.test.ts` confere que elas batem com o que as migrations criam, somadas. Veja [`docs/BANCO.md`](docs/BANCO.md#como-mudar-a-estrutura).
+- **A ordem de atualização** é sempre a mesma: as migrations antes do app. Uma tela que passa a ler coluna nova quebra num banco sem ela; o app antigo, guardado no celular de alguém, precisa continuar funcionando com o banco novo. Diga no `CHANGELOG.md` quais migrations a versão pede.
 
 ## Dados nos testes
 
@@ -49,11 +51,11 @@ npm run dev
 - [ ] `npm run lint`
 - [ ] `npm test`. Se o número de testes mudou, a linha do `npm test` no README também muda: `node scripts/conferir-readme.mjs` diz a linha certa.
 - [ ] `npm run db:testar` (com `npm run db:zerar` antes, se você mexeu no banco).
-- [ ] `npm run e2e` (se mexeu em tela, no cadastro, na batida ou na função de contas, e também se mexeu na política de conteúdo, em `src/lib/politica-de-conteudo.ts`, no `index.html` ou no `vite.config.ts`: o `npm run dev` roda sem a política, e quem a confere no navegador é o projeto `csp` do e2e).
+- [ ] `npm run e2e` (se mexeu em tela, no cadastro, na batida ou na função de contas, e também se mexeu na política de conteúdo, em `src/lib/politica-de-conteudo.ts`, no `index.html` ou no `vite.config.ts`: o `npm run dev` roda sem a política, e quem a confere no navegador é o projeto `csp` do e2e). Sem Docker na sua máquina, peça no pull request a automação "Prints da documentação" (o rótulo `prints`), que roda o e2e no GitHub.
 - [ ] `npm run build`.
 - [ ] A documentação acompanha a mudança: README, `docs/` e `CHANGELOG.md` (na seção "Não lançado").
 
-O CI roda a conferência das dependências que vão para o ar (`npm audit --omit=dev --audit-level=high`, que reprova com falha alta ou crítica conhecida), o lint, os testes, a conferência do README, o build e os testes de banco. O `npm run e2e` fica com você: ele precisa do Chrome e do Supabase local.
+O CI roda a conferência das dependências que vão para o ar (`npm audit --omit=dev --audit-level=high`, que reprova com falha alta ou crítica conhecida), o lint, os testes, a conferência do README, o build, os testes de banco e a busca de segredos no histórico inteiro (gitleaks). O `npm run e2e` não roda em todo push: ele precisa do Chrome e do Supabase local, na sua máquina ou na automação "Prints da documentação" ([`.github/workflows/prints.yml`](.github/workflows/prints.yml)), que também refaz as imagens de `docs/imagens/` quando as telas mudam.
 
 ## Licença
 
