@@ -33,9 +33,11 @@
 --      selfie, a batida e o pedido sem localização pelas RPCs de verdade, e
 --      toda conta das listas de administração com acesso.
 --
--- AS CONTAGENS ficam em constantes no começo do bloco do catálogo. Mudou a
--- migration, mudam os números aqui; o teste estático (`src/banco.test.ts`)
--- confere que elas batem com o que a migration cria. O corpo das funções não
+-- AS CONTAGENS ficam em constantes no começo do bloco do catálogo e contam o
+-- banco depois de todas as migrations de `supabase/migrations/`. Mudou uma
+-- migration, ou chegou uma nova, mudam os números aqui; o teste estático
+-- (`src/banco.test.ts`) confere que elas batem com o que as migrations criam,
+-- somadas. O corpo das funções não
 -- é conferido aqui: os testes de comportamento dos outros arquivos são a
 -- prova dele.
 --
@@ -90,14 +92,15 @@ END $partida$;
 -- ===========================================================================
 DO $catalogo$
 DECLARE
-  -- O que a migration cria (o teste estático confere estes números com ela).
+  -- O que as migrations criam, somadas: a estrutura e a da jornada (o teste
+  -- estático confere estes números com elas).
   c_tabelas         constant text[] := ARRAY[
     'ponto_admins', 'ponto_ausencias', 'ponto_configuracao', 'ponto_contas_trilha', 'ponto_correcoes',
     'ponto_funcionarios', 'ponto_local', 'ponto_pedidos_atraso', 'ponto_pin', 'ponto_pin_tentativas',
     'ponto_registros', 'ponto_registros_apagados', 'ponto_super_admins'
   ];
-  c_funcoes         constant integer := 50;
-  c_gatilhos        constant integer := 38;
+  c_funcoes         constant integer := 55;
+  c_gatilhos        constant integer := 41;
   c_regras_tabelas  constant integer := 27;
   c_regras_storage  constant integer := 6;
   c_buckets         constant integer := 2;
@@ -140,14 +143,16 @@ DECLARE
     'ponto_contas_trilha.passos|service_role:INSERT',
     'ponto_contas_trilha.resultado|service_role:INSERT'
   ];
-  -- As funções que o app chama (EXECUTE para authenticated); as outras são do
-  -- banco (gatilhos e ajudantes) e só o service_role executa.
+  -- As funções que o app chama (EXECUTE para authenticated), com as duas puras
+  -- da jornada, que os CHECKs da configuração e da ficha chamam como o papel
+  -- que grava; as outras são do banco (gatilhos e ajudantes) e só o
+  -- service_role executa.
   c_exec_app        constant text[] := ARRAY[
     'ponto_ator_aprovado', 'ponto_contas', 'ponto_decidir_pedido_atraso', 'ponto_definir_pin',
-    'ponto_distancia_metros', 'ponto_estado_do_pin', 'ponto_ficha_libera_acesso', 'ponto_meu_acesso',
-    'ponto_pedir_batida_em_atraso', 'ponto_pin_status', 'ponto_pode_administrar', 'ponto_registrar_batida',
-    'ponto_resetar_pin', 'ponto_selfie_pode_subir', 'ponto_selfie_sem_batida', 'ponto_sou_super_admin',
-    'ponto_verificar_pin'
+    'ponto_distancia_metros', 'ponto_estado_do_pin', 'ponto_ficha_libera_acesso', 'ponto_jornada_carga_de_referencia',
+    'ponto_jornada_problema', 'ponto_meu_acesso', 'ponto_pedir_batida_em_atraso', 'ponto_pin_status',
+    'ponto_pode_administrar', 'ponto_registrar_batida', 'ponto_resetar_pin', 'ponto_selfie_pode_subir',
+    'ponto_selfie_sem_batida', 'ponto_sou_super_admin', 'ponto_verificar_pin'
   ];
   -- As duas RPCs do colaborador, com a assinatura do contrato com o app: o
   -- p_sem_localizacao no fim, com DEFAULT NULL, para o app que não manda o

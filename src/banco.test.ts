@@ -29,10 +29,15 @@ import { describe, expect, it } from 'vitest'
  * estender o ponto não passa por fora delas. As contagens e a partida são só
  * da estrutura, que é a primeira.
  *
+ * As migrations que vêm depois da estrutura passam pelas mesmas invariantes de
+ * segurança, e a da jornada tem as garantias dela conferidas aqui também: no
+ * nível de cima nada se apaga, e a trava da própria ficha decide pela sessão,
+ * sem exceção de papel.
+ *
  * E os arquivos dos testes de banco (`supabase/testes/*.sql`, que o
  * `npm run db:testar` roda no Supabase local e o CI roda no trabalho `banco`),
  * antes de eles chegarem a um banco:
- *   • existem os oito, com o nome no padrão que o script aceita, e nenhum está
+ *   • existem os nove, com o nome no padrão que o script aceita, e nenhum está
  *     vazio;
  *   • cada um abre com BEGIN, põe a marca de transação logo depois e termina
  *     em ROLLBACK, sem COMMIT em lugar nenhum (nem dentro de um DO): o que o
@@ -41,7 +46,8 @@ import { describe, expect, it } from 'vitest'
  *     `$conferir$` transforma qualquer FALHOU em erro;
  *   • só troca de papel para os do app e o da função de contas, com SET LOCAL;
  *   • as contas sintéticas só usam e-mail no domínio reservado example.invalid;
- *   • a conferência da estrutura (`estrutura.sql`) conta o que a migration cria.
+ *   • a conferência da estrutura (`estrutura.sql`) conta o que as migrations
+ *     criam, somadas.
  *
  * Pelo `import.meta.glob` do Vite (`?raw`): o `tsc -b` do app não conhece
  * `node:fs`. Cada detector tem um teste com SQL de exemplo, para que um
@@ -69,13 +75,14 @@ const testesDeBanco = import.meta.glob<string>('../supabase/testes/*.sql', {
 const TESTES_DE_BANCO = Object.entries(testesDeBanco)
   .map(([caminho, sql]) => ({ nome: nomeDoArquivo(caminho), sql }))
   .sort((a, b) => a.nome.localeCompare(b.nome))
-/** Os oito arquivos de testes de banco: a blindagem, as regras de cada parte do ponto e a conferência da estrutura. */
+/** Os nove arquivos de testes de banco: a blindagem, as regras de cada parte do ponto e a conferência da estrutura. */
 const TESTES_ESPERADOS = [
   'acesso.sql',
   'ausencias.sql',
   'batida_esquecida.sql',
   'blindagem.sql',
   'estrutura.sql',
+  'jornada_e_saldo.sql',
   'local.sql',
   'trava_de_futuro.sql',
   'trilha_de_contas.sql',
@@ -325,6 +332,45 @@ function contagemDoArquivo(sql: string) {
   }
 }
 
+/**
+ * O que um conjunto de migrations cria, somado na ordem em que o CLI as aplica.
+ * Conta NOMES, e não instruções: a migration que troca uma função que já
+ * existe (CREATE OR REPLACE) não cria outra, e o banco fica com uma só. O
+ * gatilho é contado pelo nome e pela tabela (o nome só é único na tabela). As
+ * funções do app são as que terminam com EXECUTE para authenticated: vale o
+ * último GRANT ou REVOKE que cita authenticated, na ordem das migrations, como
+ * no banco. Um DROP numa migration futura teria de ser descontado aqui.
+ */
+function oQueCriam(sqls: string[]) {
+  const codigos = sqls.map(soCodigo)
+  const todas = codigos.join('\n')
+  const nomes = (expressao: RegExp, chave: (m: RegExpMatchArray) => string) =>
+    new Set(codigos.flatMap((codigo) => [...codigo.matchAll(expressao)].map(chave)))
+  const funcoes = nomes(/\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+public\.(\w+)/gi, (m) => m[1])
+  const regras = new Set(sqls.flatMap((sql) => regrasDeAcesso(sql).map((regra) => `${regra.alvo}|${regra.nome}`)))
+  const funcoesDoApp = [...funcoes]
+    .filter((nome) => {
+      const ultima = [
+        ...concessoesDaFuncao(todas, 'GRANT', nome).map((c) => ({ ...c, verbo: 'GRANT' })),
+        ...concessoesDaFuncao(todas, 'REVOKE', nome).map((c) => ({ ...c, verbo: 'REVOKE' })),
+      ]
+        .filter((c) => c.papeis.includes('authenticated'))
+        .sort((a, b) => a.posicao - b.posicao)
+        .pop()
+      return ultima?.verbo === 'GRANT'
+    })
+    .sort()
+  return {
+    tabelas: [...nomes(/\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?public\.(\w+)/gi, (m) => m[1])].sort(),
+    funcoes: funcoes.size,
+    gatilhos: nomes(/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\s+(\w+)[\s\S]*?\bON\s+([\w.]+)/gi, (m) => `${m[2]}.${m[1]}`).size,
+    regras: regras.size,
+    regrasDoStorage: [...regras].filter((regra) => regra.startsWith('storage.objects|')).length,
+    buckets: sqls.reduce((soma, sql) => soma + contagemDoArquivo(sql).buckets, 0),
+    funcoesDoApp,
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* As regras dos testes de banco (supabase/testes)                      */
 /* ------------------------------------------------------------------ */
@@ -559,6 +605,36 @@ describe('as garantias de segurança, no texto da estrutura', () => {
   })
 })
 
+describe('as garantias da jornada e da trava da própria ficha, no texto da migration', () => {
+  const JORNADA = MIGRATIONS.find((migration) => /^\d{14}_jornada_e_saldo\.sql$/.test(migration.nome))?.sql ?? ''
+  const semComentarios = limpar(JORNADA, false)
+  const funcao = (nome: string) => new RegExp(String.raw`CREATE FUNCTION public\.${nome}\([\s\S]*?\n\$\$;`).exec(semComentarios)?.[0] ?? ''
+
+  it('existe, depois da estrutura, e no nível de cima só cria, concede, revoga, comenta e confere: nada se apaga', () => {
+    expect(JORNADA.trim()).not.toBe('')
+    expect(MIGRATIONS.findIndex((migration) => migration.sql === JORNADA)).toBeGreaterThan(0)
+    expect(instrucoesForaDasFormas(JORNADA)).toEqual([])
+  })
+
+  it('a trava da própria ficha decide pela sessão, sem exceção de papel, e roda depois da jornada da ficha', () => {
+    const trava = funcao('ponto_funcionarios_guardar_propria_ficha')
+    expect(trava).toMatch(/v_ator\s+uuid\s*:=\s*auth\.uid\(\);/)
+    expect(trava).toMatch(/OLD\.usuario_id IS NOT DISTINCT FROM v_ator/)
+    expect(trava).toMatch(/NEW\.usuario_id IS NOT DISTINCT FROM v_ator/)
+    // Nem quem administra nem o super admin escapam: a função não pergunta o papel.
+    expect(trava).not.toMatch(/ponto_pode_administrar|ponto_sou_super_admin|ponto_admins|ponto_super_admins/)
+    expect(semComentarios).toMatch(
+      /CREATE TRIGGER trg_ponto_funcionarios_propria_ficha BEFORE INSERT OR UPDATE ON public\.ponto_funcionarios\s+FOR EACH ROW/,
+    )
+    // A ordem dos BEFORE é a alfabética do nome: a jornada põe os blocos em
+    // ordem antes de a trava compará-los.
+    expect(['trg_ponto_funcionarios_propria_ficha', 'trg_ponto_funcionarios_jornada'].sort()).toEqual([
+      'trg_ponto_funcionarios_jornada',
+      'trg_ponto_funcionarios_propria_ficha',
+    ])
+  })
+})
+
 describe('os detectores do teste da estrutura', () => {
   const funcao = (nome: string, cabecalho: string) =>
     `CREATE FUNCTION public.${nome}(p text)\nRETURNS void\nLANGUAGE plpgsql\n${cabecalho}\nAS $$\nBEGIN\n  RAISE NOTICE 'COMMIT;';\nEND;\n$$;\n`
@@ -681,6 +757,27 @@ describe('os detectores do teste da estrutura', () => {
     ])
   })
 
+  it('a soma das migrations conta nomes: a função trocada não conta duas vezes, e a que perde o EXECUTE sai das do app', () => {
+    const primeira = [
+      funcao('ponto_x', 'SET search_path = public') + guardas('ponto_x').replace('TO service_role', 'TO authenticated, service_role'),
+      funcao('ponto_y', 'SET search_path = public') + guardas('ponto_y').replace('TO service_role', 'TO authenticated, service_role'),
+      'CREATE TRIGGER trg_ponto_t BEFORE INSERT OR UPDATE OF a ON public.ponto_t FOR EACH ROW EXECUTE FUNCTION public.ponto_x();',
+    ].join('\n')
+    const segunda = [
+      funcao('ponto_x', 'SET search_path = public').replace('CREATE FUNCTION', 'CREATE OR REPLACE FUNCTION') + guardas('ponto_x'),
+      'REVOKE EXECUTE ON FUNCTION public.ponto_y(p text) FROM authenticated;',
+      'CREATE TRIGGER trg_ponto_t BEFORE INSERT ON public.ponto_u FOR EACH ROW EXECUTE FUNCTION public.ponto_x();',
+    ].join('\n')
+    const criado = oQueCriam([primeira, segunda])
+    expect(criado.funcoes).toBe(2)
+    // O mesmo nome de gatilho em outra tabela é outro gatilho.
+    expect(criado.gatilhos).toBe(2)
+    // ponto_x: o GRANT da segunda é só para service_role, e o último que cita
+    // authenticated é o REVOKE ALL dela; ponto_y perdeu o EXECUTE.
+    expect(criado.funcoesDoApp).toEqual([])
+    expect(oQueCriam([primeira]).funcoesDoApp).toEqual(['ponto_x', 'ponto_y'])
+  })
+
   it('a regra para anon, ou de storage.objects sem o bucket do ponto, é achada', () => {
     const certa = `CREATE POLICY "Ponto: x" ON storage.objects AS PERMISSIVE FOR SELECT TO authenticated\n  USING ((bucket_id = 'ponto-selfies'::text));\n`
     expect(problemasDasRegras(certa)).toEqual([])
@@ -692,7 +789,7 @@ describe('os detectores do teste da estrutura', () => {
 })
 
 describe('os testes de banco (supabase/testes)', () => {
-  it('existem os oito, com o nome no padrão que o script aceita, e nenhum está vazio', () => {
+  it('existem os nove, com o nome no padrão que o script aceita, e nenhum está vazio', () => {
     expect(TESTES_DE_BANCO.map((teste) => teste.nome)).toEqual(expect.arrayContaining(TESTES_ESPERADOS))
     for (const teste of TESTES_DE_BANCO) {
       // O mesmo padrão de scripts/testar-banco.sh.
@@ -707,23 +804,30 @@ describe('os testes de banco (supabase/testes)', () => {
     })
   }
 
-  it('a conferência da estrutura conta exatamente o que a migration cria', () => {
+  it('a conferência da estrutura conta exatamente o que as migrations criam, somadas', () => {
     const conferencia = contagemDaConferencia(TESTES_DE_BANCO.find((teste) => teste.nome === 'estrutura.sql')?.sql ?? '')
-    const codigo = soCodigo(ESTRUTURA)
+    const criado = oQueCriam(MIGRATIONS.map((migration) => migration.sql))
+    expect([...conferencia.tabelas].sort()).toEqual(criado.tabelas)
+    expect(conferencia.funcoes).toBe(criado.funcoes)
+    expect(conferencia.gatilhos).toBe(criado.gatilhos)
+    expect(conferencia.regrasTabelas + conferencia.regrasStorage).toBe(criado.regras)
+    expect(conferencia.regrasStorage).toBe(criado.regrasDoStorage)
+    expect(conferencia.buckets).toBe(criado.buckets)
+    expect([...conferencia.funcoesDoApp].sort()).toEqual(criado.funcoesDoApp)
+  })
+
+  it('a soma das migrations, só com a estrutura, dá o que a estrutura conta no fim dela', () => {
+    // A soma por nomes não pode divergir da contagem por instruções quando há
+    // uma migration só: se divergir, um dos dois detectores quebrou.
+    const criado = oQueCriam([ESTRUTURA])
     const contado = contagemDoArquivo(ESTRUTURA)
-    const tabelas = [...codigo.matchAll(/\bCREATE\s+TABLE\s+public\.(\w+)/gi)].map((m) => m[1]).sort()
-    const regrasDoStorage = regrasDeAcesso(ESTRUTURA).filter((regra) => regra.alvo === 'storage.objects').length
-    const funcoes = [...codigo.matchAll(/\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+public\.(\w+)/gi)].map((m) => m[1])
-    const funcoesDoApp = funcoes
-      .filter((nome) => concessoesDaFuncao(codigo, 'GRANT', nome).some((concessao) => concessao.papeis.includes('authenticated')))
-      .sort()
-    expect([...conferencia.tabelas].sort()).toEqual(tabelas)
-    expect(conferencia.funcoes).toBe(contado.funcoes)
-    expect(conferencia.gatilhos).toBe(contado.gatilhos)
-    expect(conferencia.regrasTabelas + conferencia.regrasStorage).toBe(contado.regras)
-    expect(conferencia.regrasStorage).toBe(regrasDoStorage)
-    expect(conferencia.buckets).toBe(contado.buckets)
-    expect([...conferencia.funcoesDoApp].sort()).toEqual(funcoesDoApp)
+    expect([criado.tabelas.length, criado.funcoes, criado.gatilhos, criado.regras, criado.buckets]).toEqual([
+      contado.tabelas,
+      contado.funcoes,
+      contado.gatilhos,
+      contado.regras,
+      contado.buckets,
+    ])
   })
 })
 
