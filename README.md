@@ -48,7 +48,7 @@ O que ele **não** é:
 
 - Entra uma vez com e-mail e senha. O celular guarda a sessão.
 - Bate o ponto com selfie, localização e um PIN de 4 dígitos. O horário é o do servidor.
-- Vê o comprovante na hora e confere o próprio mês no espelho.
+- Vê o comprovante na hora e confere o próprio mês no espelho: as horas de cada dia, o saldo do dia e o resumo do mês, com as horas extras, as horas negativas e as faltas.
 - Esqueceu de bater? Pede a batida no mesmo dia, e ela entra quando o RH aprova.
 
 <table>
@@ -61,17 +61,24 @@ O que ele **não** é:
 
 ### Quem administra (o RH)
 
-- Vê o mês de todo mundo, com o total de horas e o que falta resolver antes de fechar.
+- Vê o mês de todo mundo, com o total de horas (o abono incluído) e o que falta resolver antes de fechar.
+- Cadastra a jornada da empresa, dia a dia da semana, e a jornada própria de quem trabalha em outro horário.
+- Vê o saldo de cada dia (previsto, abonado, atraso e falta) e o resumo do período, com as horas extras e as horas negativas.
 - Corrige um horário ou insere a batida que faltou. Sempre com motivo, e a trilha guarda o valor anterior.
 - Aprova ou recusa os pedidos de batida esquecida.
-- Lança falta justificada, com a foto do atestado.
-- Imprime a folha do mês para assinar e exporta tudo em CSV.
+- Lança atestado, falta justificada ou outro motivo, por dias ou por um intervalo de horário, com a foto do atestado. Atestado e falta justificada abonam a parte da jornada que cobrem.
+- Imprime a folha do mês para assinar, com o previsto, o abonado, o saldo de cada dia e o resumo do mês, e exporta tudo em CSV.
 
 <table>
   <tr>
     <td align="center" width="33%"><img src="docs/imagens/painel.png" width="280" alt="Painel do RH com o fechamento do período"><br><sub>O fechamento do período</sub></td>
     <td align="center" width="33%"><img src="docs/imagens/painel-pessoa.png" width="280" alt="Os dias de uma pessoa, com corrigir e inserir"><br><sub>Os dias de uma pessoa</sub></td>
-    <td align="center" width="33%"><img src="docs/imagens/folha.png" width="280" alt="Folha de ponto mensal para imprimir e assinar"><br><sub>A folha para assinar</sub></td>
+    <td align="center" width="33%"><img src="docs/imagens/folha.png" width="280" alt="Folha de ponto mensal para imprimir e assinar, com o previsto, o abonado, o saldo e o resumo do mês"><br><sub>A folha para assinar</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="33%"><img src="docs/imagens/jornada-da-empresa.png" width="280" alt="Jornada da empresa na semana, com até dois blocos por dia"><br><sub>A jornada da empresa</sub></td>
+    <td align="center" width="33%"><img src="docs/imagens/atestado-por-horario.png" width="200" alt="Caixa de lançar um atestado por horário, com a duração calculada"><br><sub>Um atestado por horário</sub></td>
+    <td align="center" width="33%"><img src="docs/imagens/falta-com-atestado.png" width="200" alt="Caixa de lançar uma falta justificada por dias, com o atestado"><br><sub>Uma ausência por dias</sub></td>
   </tr>
 </table>
 
@@ -140,12 +147,14 @@ Depois de instalar, crie o primeiro super admin com [`supabase/primeiro-super-ad
 - **O funcionário não escolhe o tipo da batida.** Entrada, almoço, volta e saída saem da ordem do dia.
 - **Não existe fila offline.** Sem internet, a batida não acontece, e o app diz isso.
 - **Batida não se apaga.** Corrigir exige motivo e deixa trilha com o valor anterior.
+- **Ninguém decide o próprio ponto.** Quem administra, até o super admin, não lança nem corrige a própria batida, não lança a própria ausência e não muda a própria jornada.
+- **O saldo começa numa data.** Ele conta a partir da mais nova entre a data da ficha e a "Saldo calculado a partir de" da empresa: atualizar o ponto não cria falta nos meses de antes.
 
 Cada decisão, com o porquê e o que se troca por ela: [`docs/DEFESA.md`](docs/DEFESA.md).
 
 ## Segurança
 
-- As regras moram no banco: RLS em todas as tabelas, nenhum privilégio para quem não entrou e funções com caminho de busca fixo. É o banco que decide a origem da batida: a "do app" só nasce pela função da batida, com selfie e PIN, e ninguém lança nem corrige o próprio ponto.
+- As regras moram no banco: RLS em todas as tabelas, nenhum privilégio para quem não entrou e funções com caminho de busca fixo. É o banco que decide a origem da batida: a "do app" só nasce pela função da batida, com selfie e PIN. E ninguém decide o próprio ponto: o banco recusa a batida lançada ou corrigida pelo dono, a ausência lançada ou cancelada para a própria conta e a mudança da própria jornada e da data em que a pessoa passou a bater ponto.
 - O PIN só existe como hash bcrypt. Cinco erros seguidos travam a conta, e a trava endurece no mesmo dia: 15 minutos no primeiro bloqueio, 1 hora no segundo, 24 horas do terceiro em diante. Selfies e atestados ficam em buckets privados, com links que expiram.
 - O app roda sob uma política de conteúdo (CSP) gerada no build: o navegador só executa o JavaScript do próprio app e só conversa com o endereço dele e com o Supabase configurado. As fontes também saem do próprio app.
 - Para avisar de uma falha, siga [`SECURITY.md`](SECURITY.md).
@@ -161,7 +170,9 @@ Cada decisão, com o porquê e o que se troca por ela: [`docs/DEFESA.md`](docs/D
 - **Sem fila offline**, de propósito: sem internet, a batida não acontece.
 - **O JavaScript é um arquivo só**: cerca de 220 kB com gzip no build de produção, com as variáveis do Supabase definidas (sem elas, o build sai podado e bem menor). A primeira abertura numa rede lenta pode levar alguns segundos.
 - **O painel conta o dia de hoje, ainda em andamento, como incompleto** (no total do período, no cartão e no resumo da pessoa). O espelho de quem bate e a lista "Antes de fechar" já tratam hoje como dia em andamento.
-- **Sem saldo de horas.** A carga diária e a tolerância ficam guardadas na configuração, mas ainda não entram em conta nenhuma: não há banco de horas, hora extra, atraso calculado nem feriados. A folha soma as horas trabalhadas.
+- **Feriados: só os nacionais.** Os dez feriados nacionais entram no saldo como dia sem jornada, calculados pelo próprio app. Os do estado e da cidade ainda não: lance o dia como falta justificada por dias, para cada pessoa.
+- **Sem banco de horas entre meses.** O saldo de cada dia e o resumo do mês saem prontos, mas o saldo de um mês não passa para o seguinte.
+- **A jornada não tem data de vigência.** Mudar a jornada recalcula também os dias que já passaram, desde o primeiro dia cobrado. No máximo dois blocos de horário por dia, sem escala que muda de semana para semana (12x36, revezamento).
 - **Aviso legal.** Pela CLT (art. 74, § 2º), o estabelecimento com mais de 20 trabalhadores é obrigado a registrar a hora de entrada e de saída, e o registro eletrônico segue a Portaria MTP nº 671/2021. O Ponto Livre não é um REP-P registrado nem gera os arquivos AFD e AEJ dessa portaria: ele serve como controle interno e prova de presença. Quem passa de 20 trabalhadores no estabelecimento deve confirmar com o contador ou o advogado se ele atende ao caso.
 
 ## Testes
@@ -172,7 +183,11 @@ npm run db:testar # as regras do banco, no Supabase local (precisa do Docker)
 npm run e2e       # de ponta a ponta no Chrome, contra o Supabase local
 ```
 
-O `npm test` roda sem rede e sem banco. Os outros dois precisam do Supabase local de pé: veja [`docs/RODAR-LOCAL.md`](docs/RODAR-LOCAL.md). O CI ([`.github/workflows/conferir.yml`](.github/workflows/conferir.yml)) roda em todo push a conferência das dependências que vão para o ar (`npm audit --omit=dev --audit-level=high`), o lint, os testes, a conferência da contagem acima (`node scripts/conferir-readme.mjs`), o build e os testes de banco. Para contribuir, veja [`CONTRIBUTING.md`](CONTRIBUTING.md); as mudanças de cada versão estão no [`CHANGELOG.md`](CHANGELOG.md).
+O `npm test` roda sem rede e sem banco. Os outros dois precisam do Supabase local de pé: veja [`docs/RODAR-LOCAL.md`](docs/RODAR-LOCAL.md). O CI ([`.github/workflows/conferir.yml`](.github/workflows/conferir.yml)) roda em todo push a conferência das dependências que vão para o ar (`npm audit --omit=dev --audit-level=high`), o lint, os testes, a conferência da contagem acima (`node scripts/conferir-readme.mjs`), o build, os testes de banco e a busca de segredos no histórico inteiro, com o gitleaks.
+
+As imagens de `docs/imagens/` saem da automação "Prints da documentação" ([`.github/workflows/prints.yml`](.github/workflows/prints.yml)), que só roda quando alguém pede (o botão "Run workflow" da aba Actions, ou o rótulo `prints` num pull request): ela sobe o Supabase local no próprio GitHub, roda o `npm run e2e`, semeia a demonstração, tira os prints e guarda as imagens num pacote, para baixar, conferir uma por uma e commitar. Não precisa de Docker na sua máquina.
+
+Para contribuir, veja [`CONTRIBUTING.md`](CONTRIBUTING.md); as mudanças de cada versão estão no [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Licença e créditos
 
