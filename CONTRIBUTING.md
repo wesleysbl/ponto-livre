@@ -33,7 +33,7 @@ npm run dev
 
 ## Mudança no banco
 
-- **Migration nova** em `supabase/migrations/` (`npx supabase migration new <nome>`). Nunca edite a que já existe: as instalações já a aplicaram.
+- **Migration nova** em `supabase/migrations/` (`npx supabase migration new <nome>`). Nunca edite as que já existem: as instalações já as aplicaram.
 - **Tabela nova:** `ENABLE ROW LEVEL SECURITY`, `REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role` e, depois, `GRANT` só do que o app usa. Nada para `anon`. Regra de acesso só `TO authenticated`.
 - **Função nova:** `SET search_path` fixo, `REVOKE ALL` e `GRANT EXECUTE` explícitos. Se for `SECURITY DEFINER`, confira a sessão (`auth.uid()`) antes do papel.
 - **Teste em `supabase/testes/`**, no mesmo molde dos que existem (abre com `BEGIN`, termina em `ROLLBACK`, pessoas sintéticas com e-mail em `example.invalid`), rodado por `npm run db:testar`.

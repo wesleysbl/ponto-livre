@@ -215,7 +215,7 @@ Além deles, o `npm test` lê as migrations como texto ([`src/banco.test.ts`](..
 
 ## Como mudar a estrutura
 
-1. **Crie uma migration nova**: `npx supabase migration new <nome>`. Nunca edite a que já existe: as instalações já a aplicaram, e o CLI não aplica de novo.
+1. **Crie uma migration nova**: `npx supabase migration new <nome>`. Nunca edite as que já existem: as instalações já as aplicaram, e o CLI não as aplica de novo.
 2. **Siga as regras da casa**: `ENABLE ROW LEVEL SECURITY` em toda tabela nova; `REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role` e depois `GRANT` só do necessário (com os privilégios padrão revogados, uma tabela ou função nova sem `GRANT` fica fora do alcance do app); regras de acesso só `TO authenticated`; `SET search_path` fixo em toda função; nas `SECURITY DEFINER`, a sessão (`auth.uid()`) antes do papel; comentários em português contando o porquê.
 3. **Teste no Supabase local**: `npm run db:zerar` recria o banco aplicando todas as migrations; depois, `npm run db:testar`. Acrescente casos em `supabase/testes/`. Um arquivo novo segue o molde dos outros: o `src/banco.test.ts` confere que todo arquivo da pasta abre com `BEGIN`, termina em `ROLLBACK` e transforma qualquer FALHOU em erro.
 4. **Atualize as contagens**: as constantes do começo de `supabase/testes/estrutura.sql` (tabelas, funções, gatilhos, regras e buckets, e as listas de privilégios por tabela, por coluna e de funções que o app chama) passam a contar o banco depois de todas as migrations.

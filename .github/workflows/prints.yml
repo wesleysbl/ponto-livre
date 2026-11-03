@@ -172,8 +172,12 @@ jobs:
         # do meio-dia sempre cai no dia de antes. O feriado vem de
         # `demo/feriados.mjs` (a regra do app, com a Paixão de Cristo), que
         # escreve o nome do feriado do dia, ou nada; se ele falhar, o passo
-        # reprova, em vez de tratar o dia como útil.
+        # reprova, em vez de tratar o dia como útil. Quem garante isso é o
+        # `set -euo pipefail` da primeira linha, escrito no próprio passo: sem
+        # ele, a garantia dependeria do `bash -e` que o runner usa quando o
+        # passo não diz `shell:`, e sumiria calada se o passo mudasse de shell.
         run: |
+          set -euo pipefail
           agora=$(date +%s)
           meio_dia=$(date -d "$(date -d "@$agora" +%F) 12:00" +%s)
           alvo=""
@@ -234,9 +238,13 @@ jobs:
         # Sempre, mesmo depois de uma falha: o pacote, o cache do npm e o fim
         # do trabalho falam com o GitHub na hora certa. E a conferência: o
         # relógio falso tem de ter andado junto com o tempo desde que a
-        # máquina ligou; se pulou, alguém mexeu nele no meio do caminho.
+        # máquina ligou; se pulou, alguém mexeu nele no meio do caminho. O
+        # `set -euo pipefail`, como no passo que muda o relógio: se a leitura
+        # do arquivo, a conta ou o `sudo date` falhar, o passo reprova, em vez
+        # de dizer que a hora voltou.
         if: always()
         run: |
+          set -euo pipefail
           if [ ! -f "$RUNNER_TEMP/relogio" ]; then
             echo "O relógio não tinha mudado."
             exit 0
