@@ -90,7 +90,7 @@ Chegou e esqueceu de bater? Toque em **Esqueci de bater hoje** (embaixo do botã
 
 <img src="imagens/celular-espelho.png" width="280" alt="Espelho do mês com o total, o saldo do mês e os dias">
 
-- **Total do mês**: as horas das suas batidas, mais as horas abonadas por atestado ou falta justificada. No dia com abono, o total vem com a conta embaixo, como "8h00 · 6h00 trabalhadas + 2h00 de atestado".
+- **Total do mês**: as horas das suas batidas, mais as horas abonadas por atestado ou falta justificada. No dia com abono, o total vem com a conta embaixo: "8h00" e, na linha de baixo, "6h00 trabalhadas + 2h00 de atestado".
 - **Saldo do mês**: as suas horas comparadas com a sua jornada, nos dias que já acabaram. Embaixo vêm o **Previsto** (a jornada desses dias), o **Abonado**, as **Horas extras** (o que passou da jornada), as **Horas negativas** (o que faltou, faltas inclusive) e quantas faltas houve. Hoje entra no saldo quando o dia acabar.
 - **A linha do saldo de cada dia**: o previsto do dia, o abonado, o atraso, a falta e o saldo do dia. Uma diferença de até a tolerância da empresa (10 minutos, no padrão) não conta. No dia sem jornada (o sábado e o domingo, no padrão) e no feriado nacional, a linha diz **Dia sem jornada** ou **Feriado**, e o que você trabalhou é hora extra.
 - **Em andamento**: o dia de hoje, ainda aberto. As horas dele entram no total quando você bater a próxima, e no saldo quando o dia acabar.

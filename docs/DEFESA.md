@@ -214,7 +214,7 @@ Todo sistema de ponto escolhe entre coisas que não dá para ter juntas: mais co
 
 ## 22. O CSV cresce no fim
 
-**O que é.** O CSV do período mantém as 18 colunas de antes, na mesma ordem e com o mesmo conteúdo, e o saldo entra em 9 colunas novas no fim (do "Previsto do dia" ao "Estado do dia"). Como as colunas que já fechavam o dia, elas são preenchidas só na última linha de cada dia. O saldo negativo vai com o sinal de menos comum ("-8:00"), e o positivo, sem sinal.
+**O que é.** O CSV do período mantém as 18 colunas de antes, na mesma ordem, e o saldo entra em 9 colunas novas no fim (do "Previsto do dia" ao "Estado do dia"). Como as colunas que já fechavam o dia, elas são preenchidas só na última linha de cada dia. O saldo negativo vai com o sinal de menos comum ("-8:00"), e o positivo, sem sinal.
 
 **Por quê.** Muita empresa monta a planilha da contabilidade em cima do arquivo: fórmulas que apontam para a coluna 17, filtros, tabelas dinâmicas. Coluna nova no meio quebraria tudo isso sem aviso. No fim, a planilha de ontem continua lendo o arquivo de hoje. O sinal de menos comum faz a planilha ler o saldo como número e somar a coluna; um "+" no começo da célula seria lido como fórmula, e por isso o positivo vai sem sinal. A neutralização de fórmula continua valendo para todo texto livre.
 

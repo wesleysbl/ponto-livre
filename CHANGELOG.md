@@ -24,7 +24,7 @@ Enquanto a versão começar com 0, qualquer versão nova pode pedir cuidado na a
 
 - **Lançar por dias ou por horário.** Por dias: a data de início e quantos dias (corridos, até 120), com a data final calculada na hora. Por horário: a data, "Das" e "Até", com a duração calculada na hora. Os três tipos aceitam as duas formas. Vários intervalos no mesmo dia valem, e os que só se encostam também (das 14:00 às 16:00 e das 16:00 às 16:30). O banco recusa, com a frase do motivo, o intervalo que cruza outro e o intervalo num dia já coberto por uma ausência de dia inteiro.
 - **O abono.** Atestado médico e falta justificada abonam a parte da jornada que cobrem e que não foi trabalhada, sem apagar nenhuma batida: o tempo trabalhado dentro do intervalo conta como trabalho, uma vez só, e a parte fora da jornada não abona. "Outro motivo" só marca o dia. A marca da ausência traz o período e o abono: "Atestado 08:00-10:00 · abonou 2h00".
-- **O total do dia e do período somam o abono**, com a conta escrita embaixo ("8h00 · 6h00 trabalhadas + 2h00 de atestado"), no espelho, nos dias de uma pessoa e no total de cada pessoa e do período no painel.
+- **O total do dia e do período somam o abono**, com a conta escrita embaixo ("8h00" e, na linha de baixo, "6h00 trabalhadas + 2h00 de atestado"), no espelho, nos dias de uma pessoa e no total de cada pessoa e do período no painel.
 
 #### A folha e o CSV
 
