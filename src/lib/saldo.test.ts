@@ -856,33 +856,33 @@ const JORNADA_DE_NOVE_HORAS: Jornada = ([1, 2, 3, 4, 5] as const).flatMap((dia) 
 ])
 
 describe('o atestado soma nas horas do dia', () => {
-  // Terça 06/10/2026: 08:00-12:00 e 13:00-16:31 (7h31), atestado das 16:30 às 17:30.
-  const TERCA = '2026-10-06'
-  const saidaCedo = batidas(TERCA, '08:00', '12:00', '13:00', '16:31')
-  const atestadoDaTarde = () => porHorario(TERCA, '16:30', '17:30')
+  // Quarta 21/10/2026: 08:00-12:00 e 13:00-15:01 (6h01), atestado das 15:00 às 16:00.
+  const QUARTA = '2026-10-21'
+  const saidaCedo = batidas(QUARTA, '08:00', '12:00', '13:00', '15:01')
+  const atestadoDaTarde = () => porHorario(QUARTA, '15:00', '16:00')
 
-  it('o dia soma 8h30: 7h31 trabalhadas e 0h59 de atestado (o minuto das 16:30 já é trabalho)', () => {
-    const dia = calcularSaldoDoDia(TERCA, saidaCedo, [atestadoDaTarde()], { ...REGRAS, jornadaDaEmpresa: JORNADA_DE_NOVE_HORAS })
-    expect(dia).toMatchObject({ estado: 'cobranca', trabalhado: 451, abonado: 59 })
-    expect(horasDoDia(dia)).toBe(510)
+  it('o dia soma 7h00: 6h01 trabalhadas e 0h59 de atestado (o minuto das 15:00 já é trabalho)', () => {
+    const dia = calcularSaldoDoDia(QUARTA, saidaCedo, [atestadoDaTarde()], { ...REGRAS, jornadaDaEmpresa: JORNADA_DE_NOVE_HORAS })
+    expect(dia).toMatchObject({ estado: 'cobranca', trabalhado: 361, abonado: 59 })
+    expect(horasDoDia(dia)).toBe(420)
     expect(dia.coberturas[0].minutosAbonados).toBe(59)
   })
 
   it('sem a data na ficha, o dia continua fora da cobrança, mas o atestado abona e soma', () => {
     const regras = { ...REGRAS, jornadaDaEmpresa: JORNADA_DE_NOVE_HORAS, cobrancaDesde: null }
-    const dia = calcularSaldoDoDia(TERCA, saidaCedo, [atestadoDaTarde()], regras)
+    const dia = calcularSaldoDoDia(QUARTA, saidaCedo, [atestadoDaTarde()], regras)
     expect(dia).toMatchObject({
       estado: 'fora',
       motivoDeFora: 'sem_bate_ponto',
       previsto: 0,
-      trabalhado: 451,
+      trabalhado: 361,
       abonado: 59,
       saldo: 0,
       debito: 0,
       falta: false,
     })
     expect(dia.coberturas[0].minutosAbonados).toBe(59)
-    expect(horasDoDia(dia)).toBe(510)
+    expect(horasDoDia(dia)).toBe(420)
     // O saldo do mês continua sem esse dia: ele não é cobrado.
     expect(resumirSaldos([dia]).abonado).toBe(0)
   })
@@ -922,17 +922,17 @@ describe('o atestado soma nas horas do dia', () => {
 
   it('abonadoNoTotal + o trabalhado do espelho = a soma das horas de cada dia', () => {
     const todas = [
-      ...batidas('2026-10-05', ...DIA_NORMAL),
+      ...batidas('2026-10-20', ...DIA_NORMAL),
       ...saidaCedo,
-      ...batidas('2026-10-07', '08:00', '12:00', '13:00'), // incompleto
+      ...batidas('2026-10-22', '08:00', '12:00', '13:00'), // incompleto
     ]
-    const ausencias = [atestadoDaTarde(), ausencia({ dia_inicio: '2026-10-08', dia_fim: '2026-10-08' })]
-    const periodo = calcularSaldoDoPeriodo('2026-10-05', '2026-10-09', todas, ausencias, { ...REGRAS, cobrancaDesde: null })
+    const ausencias = [atestadoDaTarde(), ausencia({ dia_inicio: '2026-10-23', dia_fim: '2026-10-23' })]
+    const periodo = calcularSaldoDoPeriodo('2026-10-20', '2026-10-24', todas, ausencias, { ...REGRAS, cobrancaDesde: null })
     const espelho = montarEspelho('2026-10', todas)
     const somaDosDias = periodo.dias.reduce((soma, dia) => soma + horasDoDia(dia), 0)
     expect(espelho.minutos + abonadoNoTotal(periodo.dias)).toBe(somaDosDias)
-    // 05: 8h; 06: 7h31 + 0h29 (16:31-17:00, jornada da semente); 07: incompleto; 08: atestado de 8h.
-    expect(somaDosDias).toBe(480 + 451 + 29 + 480)
+    // 20: 8h; 21: 6h01 + 0h59 (15:01-16:00, dentro da jornada da semente); 22: incompleto; 23: atestado de 8h.
+    expect(somaDosDias).toBe(480 + 361 + 59 + 480)
   })
 
   it('rotuloDoAbono diz de onde veio o abono', () => {
