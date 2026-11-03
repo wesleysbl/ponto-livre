@@ -2685,6 +2685,30 @@ describe('fechar o mês sem surpresa e achar o caminho', () => {
     conferirFumaca(tela)
   })
 
+  it('/folha sem a configuração da empresa: nem com a ficha sem a data há o aviso de Pessoas, e o papel diz que falta a jornada', async () => {
+    vi.spyOn(window, 'print').mockImplementation(() => {})
+    const banco = bancoSemPendencia()
+    entrarComo('admin', {
+      ...banco,
+      ponto_configuracao: [],
+      ponto_funcionarios: banco.ponto_funcionarios.map((ficha) =>
+        ficha.usuario_id === ANA.id ? { ...ficha, bate_ponto_desde: null } : ficha,
+      ),
+    })
+    const tela = await abrir(FOLHA_DE_OUTUBRO)
+    const avisos = [...tela.raiz.querySelectorAll('section[aria-labelledby="antes-de-imprimir"] li')].map(textoDe)
+    expect(avisos.some((aviso) => aviso.includes('Passou a bater ponto aqui em'))).toBe(false)
+    const destinos = [...tela.raiz.querySelectorAll('section[aria-labelledby="antes-de-imprimir"] a')].map(
+      (link) => link.getAttribute('href'),
+    )
+    expect(destinos).not.toContain('/administracao#secao-pessoas')
+    // Sem a configuração, quem explica a falta do saldo é o papel.
+    expect(tela.texto()).toContain(
+      'Esta folha não traz previsto, abonado e saldo: a jornada da empresa não está cadastrada no sistema.',
+    )
+    conferirFumaca(tela)
+  })
+
   it('"Voltar" da folha leva à pessoa no mesmo mês, e não no corrente', async () => {
     vi.spyOn(window, 'print').mockImplementation(() => {})
     entrarComo('admin', bancoSemPendencia())
