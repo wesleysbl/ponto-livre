@@ -73,3 +73,43 @@ describe('feriadosNacionais', () => {
     expect(feriadosNacionais(2023)).toHaveLength(9)
   })
 })
+
+/*
+ * A SEMENTE DA DEMONSTRAÇÃO E O RELÓGIO DA AUTOMAÇÃO DOS PRINTS rodam no Node
+ * sem o TypeScript do app, com a cópia em JavaScript de `demo/feriados.mjs`.
+ * Ela tem de dar o mesmo feriado que o app em todo dia: senão a semente põe
+ * batida num feriado das telas, ou o "hoje" falso dos prints cai num deles.
+ */
+describe('demo/feriados.mjs, a cópia da semente e da automação dos prints', () => {
+  const caminho = new URL('../../demo/feriados.mjs', import.meta.url).href
+
+  it('dá o mesmo feriado que o app em todo dia de 1900 a 2199', async () => {
+    const copia = (await import(/* @vite-ignore */ caminho)) as {
+      feriadoNacional: (dia: string) => string | null
+      domingoDePascoa: (ano: number) => string
+    }
+    const diferentes: string[] = []
+    let feriados = 0
+    for (let data = new Date(Date.UTC(1900, 0, 1)); data.getUTCFullYear() < 2200; data.setUTCDate(data.getUTCDate() + 1)) {
+      const dia = data.toISOString().slice(0, 10)
+      const doApp = feriadoNacional(dia)
+      if (doApp !== null) feriados += 1
+      if (copia.feriadoNacional(dia) !== doApp) diferentes.push(dia)
+    }
+    expect(diferentes).toEqual([])
+    // 300 anos com nove ou dez feriados cada: a comparação não passou em branco.
+    expect(feriados).toBeGreaterThan(2800)
+    for (let ano = 1900; ano < 2200; ano += 1) expect(copia.domingoDePascoa(ano)).toBe(domingoDePascoa(ano))
+  })
+
+  it('conta a Paixão de Cristo, e a data inválida não é feriado', async () => {
+    const copia = (await import(/* @vite-ignore */ caminho)) as { feriadoNacional: (dia: string) => string | null }
+    expect(copia.feriadoNacional('2026-04-03')).toBe('Paixão de Cristo')
+    expect(copia.feriadoNacional('2027-03-26')).toBe('Paixão de Cristo')
+    expect(copia.feriadoNacional('2023-11-20')).toBeNull()
+    expect(copia.feriadoNacional('2026-11-20')).toBe('Consciência Negra')
+    expect(copia.feriadoNacional('')).toBeNull()
+    expect(copia.feriadoNacional('2026-13-01')).toBeNull()
+    expect(copia.feriadoNacional('12/10/2026')).toBeNull()
+  })
+})

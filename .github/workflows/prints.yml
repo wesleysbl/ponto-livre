@@ -50,10 +50,11 @@
 # automação for acionada, o trabalho põe o relógio da máquina inteira (o
 # banco, o login, o Node e o Chrome leem o mesmo) no dia útil anterior ao do
 # acionamento, às 9h30 de Brasília, e deixa o tempo correr dali. Dia útil é
-# de segunda a sexta, sem os feriados nacionais de data fixa (os mesmos de
-# `demo/semear.mjs`). Acionada às 7h ou às 23h do mesmo dia, a automação tira
-# as mesmas telas, no mesmo dia e na mesma hora (a não ser pelos minutos que
-# cada passo leva).
+# de segunda a sexta, sem os feriados nacionais que o app conta, a Paixão de
+# Cristo inclusive (`demo/feriados.mjs`, a mesma regra de
+# `src/lib/feriados.ts`, que a semente também usa). Acionada às 7h ou às 23h
+# do mesmo dia, a automação tira as mesmas telas, no mesmo dia e na mesma hora
+# (a não ser pelos minutos que cada passo leva).
 # O relógio sempre volta, nunca adianta. É voltar, e não adiantar, que não
 # atrapalha a conversa do runner com o GitHub: o token que o runner já tem
 # não parece vencido, e ele não pede outro com a data errada. A mudança vem
@@ -168,7 +169,10 @@ jobs:
       - name: Pôr o relógio no dia útil anterior, às 9h30 de Brasília
         # Ver "O HORÁRIO DAS IMAGENS", no topo. As contas de data partem do
         # meio-dia de hoje, e Brasília não tem horário de verão: tirar 24 horas
-        # do meio-dia sempre cai no dia de antes.
+        # do meio-dia sempre cai no dia de antes. O feriado vem de
+        # `demo/feriados.mjs` (a regra do app, com a Paixão de Cristo), que
+        # escreve o nome do feriado do dia, ou nada; se ele falhar, o passo
+        # reprova, em vez de tratar o dia como útil.
         run: |
           agora=$(date +%s)
           meio_dia=$(date -d "$(date -d "@$agora" +%F) 12:00" +%s)
@@ -176,7 +180,11 @@ jobs:
           for atras in $(seq 1 10); do
             dia=$(date -d "@$(( meio_dia - atras * 86400 ))" +%F)
             case "$(date -d "$dia" +%u)" in 6 | 7) continue ;; esac
-            case "${dia:5}" in 01-01 | 04-21 | 05-01 | 09-07 | 10-12 | 11-02 | 11-15 | 11-20 | 12-25) continue ;; esac
+            feriado=$(node demo/feriados.mjs "$dia")
+            if [ -n "$feriado" ]; then
+              echo "$(date -d "$dia" +%d/%m/%Y) é feriado ($feriado): fica de fora."
+              continue
+            fi
             alvo=$(date -d "$dia 09:30" +%s)
             break
           done

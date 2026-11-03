@@ -44,7 +44,8 @@
  * horas na semana). Os outros seguem a da empresa.
  *
  * O MÊS DE BATIDAS. Os dias úteis do mês corrente até ontem (sem sábado,
- * domingo e os feriados nacionais de data fixa), 4 batidas por dia, com
+ * domingo e os feriados nacionais que o app conta, a Paixão de Cristo
+ * inclusive: `demo/feriados.mjs`), 4 batidas por dia, com
  * variação de minutos de pessoa para pessoa e de dia para dia; cada batida com
  * a selfie desenhada da pessoa e uma coordenada a poucos metros do local. Se o
  * mês corrente ainda tem menos de 10 dias úteis passados (o começo do mês), o
@@ -134,6 +135,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { chromium } from '@playwright/test'
+import { feriadoNacional } from './feriados.mjs'
 
 const RAIZ = fileURLToPath(new URL('..', import.meta.url))
 const FUSO = 'America/Sao_Paulo'
@@ -203,9 +205,6 @@ const EMPRESA = {
 /** O local do elenco (centro de São Paulo) e a Av. Paulista, a 2,6 km dele. */
 const LOCAL = { nome: 'Sede da Empresa Exemplo', latitude: -23.55052, longitude: -46.633308, raio_metros: 150 }
 const PAULISTA = { latitude: -23.5614, longitude: -46.6559 }
-
-/** Os feriados nacionais de data fixa (MM-DD). Os móveis (Carnaval, Paixão, Corpus Christi) não entram: é só demonstração. */
-const FERIADOS = new Set(['01-01', '04-21', '05-01', '09-07', '10-12', '11-02', '11-15', '11-20', '12-25'])
 
 /** Abaixo disto o mês corrente é curto demais para ser "o mês" da demonstração. */
 const DIAS_UTEIS_MINIMOS = 10
@@ -361,9 +360,14 @@ function somarDias(dia, dias) {
   return data.toISOString().slice(0, 10)
 }
 
+/**
+ * De segunda a sexta, sem os feriados nacionais do app (`demo/feriados.mjs`,
+ * a mesma regra de `src/lib/feriados.ts`): nenhuma batida num dia que o saldo
+ * trata como dia sem jornada.
+ */
 function ehDiaUtil(dia) {
   const semana = new Date(`${dia}T12:00:00Z`).getUTCDay()
-  return semana !== 0 && semana !== 6 && !FERIADOS.has(dia.slice(5))
+  return semana !== 0 && semana !== 6 && feriadoNacional(dia) === null
 }
 
 function diasUteis(inicio, fim) {
