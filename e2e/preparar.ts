@@ -10,7 +10,10 @@ import { PASTA_DOS_PRINTS, PRINTS } from './prints.ts'
  * Roda uma vez, antes de qualquer teste, e falha cedo com a frase do que
  * fazer:
  *
- *   1. o Supabase local de pé e com a estrutura do ponto aplicada;
+ *   1. o Supabase local de pé e com a estrutura do ponto aplicada, e também
+ *      as migrations que vieram depois dela (a jornada, com a data do saldo,
+ *      e a ausência por horário): um banco local de antes delas abre as telas
+ *      com erro de coluna que não existe, longe da causa;
  *   2. a câmera falsa: o rosto de `demo/rostos/` vira o arquivo que a webcam
  *      do Chrome mostra (ver `camera-falsa.ts`). Ela tem de existir ANTES de o
  *      navegador dos testes abrir, porque é na abertura que o Chrome lê o
@@ -24,6 +27,17 @@ export default async function preparar(config: FullConfig): Promise<void> {
   ).trim()
   if (estrutura !== 't') {
     throw new Error('A estrutura do ponto não está no banco do Supabase local. Recrie o banco com `npm run db:zerar`.')
+  }
+  // Uma coluna de cada migration nova basta: o CLI aplica cada uma inteira, ou nada dela.
+  const migrationsNovas = rodarComoPostgres(`
+    SELECT count(*) = 2 FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND (table_name::text, column_name::text) IN (('ponto_configuracao', 'jornada'), ('ponto_ausencias', 'modalidade'));
+  `).trim()
+  if (migrationsNovas !== 't') {
+    throw new Error(
+      'A jornada e a ausência por horário não estão no banco do Supabase local (faltam migrations de supabase/migrations/). Recrie o banco com `npm run db:zerar`.',
+    )
   }
 
   const canal = config.projects[0]?.use.channel

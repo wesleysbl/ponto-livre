@@ -253,9 +253,14 @@ test.describe('a administração, no computador', () => {
       await caixa.getByLabel('Cargo', { exact: true }).fill('Vendas')
       await caixa.getByLabel('Admissão', { exact: true }).fill(hoje)
       await caixa.getByLabel('Passou a bater ponto aqui em', { exact: true }).fill(hoje)
-      // A ficha é a caixa mais alta do cadastro: numa janela de 900 px, o botão
-      // "Criar a ficha" ficaria fora do print.
-      await print(page, '07-super-admin-cria-a-ficha-da-ana', { altura: 1180 })
+      // A jornada da Ana é a da empresa (a ficha grava nula), e a caixa mostra qual é.
+      await expect(caixa.getByLabel('Jornada desta pessoa', { exact: true })).toHaveValue('empresa')
+      await expect(caixa.getByText('A jornada da empresa, hoje:', { exact: true })).toBeVisible()
+      // A ficha é a caixa mais alta do cadastro, e passa da janela de 900 px: o
+      // botão "Criar a ficha" ficaria fora do print. A janela cresce até caber o
+      // cartão inteiro, com a margem de cima e de baixo da caixa.
+      const cartao = await caixa.locator(':scope > div > div').first().boundingBox()
+      await print(page, '07-super-admin-cria-a-ficha-da-ana', { altura: Math.max(900, Math.ceil((cartao?.height ?? 0) + 96)) })
       await caixa.getByRole('button', { name: 'Criar a ficha' }).click()
       await expect(caixa).toBeHidden()
       await conferirRecado(page, `Ficha de ${ana.nome} criada.`)
@@ -320,13 +325,15 @@ test.describe('a administração, no computador', () => {
         SELECT
           (SELECT count(*) FROM public.ponto_funcionarios f JOIN auth.users u ON u.id = f.usuario_id
             WHERE u.email = '${ana.email}' AND f.ativo AND f.cargo = 'Vendas'
-              AND f.admissao = '${hoje}' AND f.bate_ponto_desde = '${hoje}' AND f.matricula = '${ana.matricula}'),
+              AND f.admissao = '${hoje}' AND f.bate_ponto_desde = '${hoje}' AND f.matricula = '${ana.matricula}'
+              AND f.jornada IS NULL),
           (SELECT count(*) FROM public.ponto_admins a JOIN auth.users u ON u.id = a.usuario_id WHERE u.email = '${rita.email}'),
           (SELECT count(*) FROM public.ponto_funcionarios f JOIN auth.users u ON u.id = f.usuario_id WHERE u.email = '${rita.email}'),
           (SELECT u.raw_app_meta_data->>'full_name' FROM auth.users u WHERE u.email = '${sergio.email}');
       `).trim()
-      // A Ana com a ficha ligada; a Rita administra e não tem ficha; o super admin com o nome
-      // (no app_metadata, onde a função de contas o guarda).
+      // A Ana com a ficha ligada e a jornada da empresa (nula na ficha); a Rita
+      // administra e não tem ficha; o super admin com o nome (no app_metadata,
+      // onde a função de contas o guarda).
       expect(banco).toBe(`1|1|0|${sergio.nome}`)
     })
   })
