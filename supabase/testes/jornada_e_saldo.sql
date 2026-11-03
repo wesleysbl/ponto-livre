@@ -17,6 +17,10 @@
 --   • A jornada própria, na ficha (T25 a T32): quem administra a grava e a
 --     tira (nula = segue a da empresa), com as mesmas regras; quem bate lê a
 --     da empresa e a própria e não grava nenhuma.
+--   • A gravação das telas, como o app a manda (A1 e A2): o upsert da
+--     configuração com a jornada, a tolerância, a janela e a data do saldo,
+--     sem a carga; e a ficha nova de outra pessoa já com a jornada própria e
+--     a data. As duas num bloco que sempre volta atrás.
 --   • A chave pública (T33 a T35), sem nada; os CHECKs que seguram as regras
 --     sem os gatilhos (T36 a T38); e a ordem dos gatilhos da ficha (T39).
 --   • Quem já usava o ponto (J1 a J7): a jornada montada das cargas de 3 h,
@@ -272,6 +276,41 @@ BEGIN
     v_res := v_res || ('FALHOU T24 gravar a carga deu erro: ' || SQLERRM);
   END;
 
+  -- A1. A gravação da tela da jornada (`salvarJornada`), como o app a manda:
+  --     o upsert com a jornada, a tolerância, a janela e a data do saldo, sem
+  --     a carga. Grava as quatro, a jornada volta em ordem e a carga é a do
+  --     maior dia. Num bloco que sempre volta atrás (P0099): a configuração
+  --     fica como estava para os casos seguintes.
+  v_erro := NULL;
+  v_jornada := NULL;
+  v_carga := NULL;
+  v_tol := NULL;
+  v_n := NULL;
+  v_data2 := NULL;
+  BEGIN
+    INSERT INTO public.ponto_configuracao (id, jornada, tolerancia_minutos, janela_duplicidade_segundos, saldo_a_partir_de)
+    VALUES (1, '[{"dia": 2, "inicio": "13:00", "fim": "19:00"}, {"dia": 2, "inicio": "07:00", "fim": "12:00"}]', 7, 75, v_hoje - 10)
+    ON CONFLICT (id) DO UPDATE SET jornada = EXCLUDED.jornada,
+                                   tolerancia_minutos = EXCLUDED.tolerancia_minutos,
+                                   janela_duplicidade_segundos = EXCLUDED.janela_duplicidade_segundos,
+                                   saldo_a_partir_de = EXCLUDED.saldo_a_partir_de
+    RETURNING jornada, carga_diaria_minutos, tolerancia_minutos, janela_duplicidade_segundos, saldo_a_partir_de
+      INTO v_jornada, v_carga, v_tol, v_n, v_data2;
+    RAISE EXCEPTION 'desfazer a gravacao do A1' USING ERRCODE = 'P0099';
+  EXCEPTION
+    WHEN SQLSTATE 'P0099' THEN NULL;
+    WHEN OTHERS THEN v_erro := SQLERRM;
+  END;
+  SELECT c.jornada INTO v_esperada FROM public.ponto_configuracao c WHERE c.id = 1;
+  v_ok := v_erro IS NULL
+      AND v_jornada = '[{"dia": 2, "inicio": "07:00", "fim": "12:00"}, {"dia": 2, "inicio": "13:00", "fim": "19:00"}]'::jsonb
+      AND v_carga = 660 AND v_tol = 7 AND v_n = 75 AND v_data2 = v_hoje - 10 AND v_esperada = c_semente;
+  v_res := v_res || format('%s A1 o upsert da tela da jornada (jornada, tolerancia, janela e data, sem a carga) grava: em ordem? %s, carga %s min, tolerancia %s, janela %s s, data gravada? %s; a configuracao voltou? %s%s',
+    CASE WHEN coalesce(v_ok, false) THEN 'OK' ELSE 'FALHOU' END,
+    v_jornada = '[{"dia": 2, "inicio": "07:00", "fim": "12:00"}, {"dia": 2, "inicio": "13:00", "fim": "19:00"}]'::jsonb,
+    v_carga, v_tol, v_n, v_data2 = v_hoje - 10, v_esperada = c_semente,
+    CASE WHEN v_erro IS NULL THEN '' ELSE ': ' || v_erro END);
+
   -- =========================================================================
   -- A JORNADA PRÓPRIA, NA FICHA
   -- =========================================================================
@@ -367,6 +406,32 @@ BEGIN
   EXCEPTION WHEN OTHERS THEN
     v_res := v_res || ('FALHOU T32 tirar a jornada propria deu erro: ' || SQLERRM);
   END;
+
+  -- A2. A ficha nova pela tela (`salvarFicha` sem id), de outra pessoa e sem
+  --     conta, já com a jornada própria e a data, com todas as colunas que o
+  --     app manda: quem administra a cria, e a jornada volta em ordem. Num
+  --     bloco que sempre volta atrás (P0099).
+  v_erro := NULL;
+  v_jornada := NULL;
+  v_data2 := NULL;
+  BEGIN
+    INSERT INTO public.ponto_funcionarios (usuario_id, nome_completo, cpf, matricula, cargo, admissao, desligamento,
+                                           ctps, ctps_serie, centro_custo, bate_ponto_desde, jornada)
+    VALUES (NULL, 'Bruno Lima', NULL, NULL, 'Estoque', NULL, NULL, NULL, NULL, NULL, v_hoje - 5, c_propria)
+    RETURNING jornada, bate_ponto_desde INTO v_jornada, v_data2;
+    RAISE EXCEPTION 'desfazer a ficha do A2' USING ERRCODE = 'P0099';
+  EXCEPTION
+    WHEN SQLSTATE 'P0099' THEN NULL;
+    WHEN OTHERS THEN v_erro := SQLERRM;
+  END;
+  SELECT count(*) INTO v_n FROM public.ponto_funcionarios f WHERE f.nome_completo = 'Bruno Lima' AND f.cargo = 'Estoque';
+  v_ok := v_erro IS NULL AND v_data2 = v_hoje - 5 AND v_n = 0
+      AND v_jornada = '[{"dia": 3, "inicio": "09:00", "fim": "13:00"}, {"dia": 3, "inicio": "14:00", "fim": "18:00"}]'::jsonb;
+  v_res := v_res || format('%s A2 quem administra cria a ficha de outra pessoa com a jornada propria e a data, como a tela manda: em ordem? %s, data gravada? %s; desfeita? %s%s',
+    CASE WHEN coalesce(v_ok, false) THEN 'OK' ELSE 'FALHOU' END,
+    v_jornada = '[{"dia": 3, "inicio": "09:00", "fim": "13:00"}, {"dia": 3, "inicio": "14:00", "fim": "18:00"}]'::jsonb,
+    v_data2 = v_hoje - 5, v_n = 0,
+    CASE WHEN v_erro IS NULL THEN '' ELSE ': ' || v_erro END);
 
   -- =========================================================================
   -- A CHAVE PÚBLICA (anon): NADA
