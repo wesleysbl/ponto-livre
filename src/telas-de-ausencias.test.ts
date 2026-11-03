@@ -572,11 +572,12 @@ describe('o visor do atestado e a folha impressa', () => {
   })
 
   /*
-   * A FOLHA AINDA SOMA SÓ AS BATIDAS: o previsto, o abonado e o saldo entram
-   * nela junto com o resumo do mês, e aí a legenda e a marca com o período
-   * mudam. Até lá, o que ela diz é o que ela conta.
+   * A FOLHA SEM AS REGRAS DO SALDO (aqui, sem a configuração): a marca da
+   * ausência é a das telas, com o período, e a legenda diz o que abona e que o
+   * total trabalhado é só o das batidas. "Não soma nem desconta horas" deixou
+   * de ser verdade com o abono.
    */
-  it('a folha impressa marca os dias e explica na legenda que a falta não conta hora', () => {
+  it('a folha impressa marca os dias e explica na legenda que a ausência não muda o total trabalhado', () => {
     const folha = montarFolha({
       empresa: null,
       funcionario: { nome: 'Fulana', email: null },
@@ -588,8 +589,14 @@ describe('o visor do atestado e a folha impressa', () => {
     expect(html).toContain('14/10/2026')
     expect(html).toContain('16/10/2026')
     expect(html).not.toContain('22/10/2026')
-    expect(html).toContain('Falta justificada — atestado médico (atestado anexado)')
-    expect(html).toContain('não soma nem desconta horas')
+    expect(html).toContain('Atestado, dia inteiro (atestado anexado)')
+    expect(html).not.toMatch(/Falta justificada \u2014 atestado médico/)
+    expect(html).not.toContain('não soma nem desconta horas')
+    expect(html).toContain('Atestado e falta justificada abonam a parte da jornada que cobrem')
+    expect(html).toContain('Nenhuma delas muda o total trabalhado')
+    // Sem as regras do saldo, a folha é a de antes e diz por quê.
+    expect(html).toContain('Esta folha não traz previsto, abonado e saldo')
+    expect(html).not.toMatch(/[\u2013\u2014]/)
     expect(html).toContain('4h00')
   })
 })

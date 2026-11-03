@@ -1003,6 +1003,29 @@ describe('os avisos da folha', () => {
     const emBranco = avisosDaFolha({ usuarioId: 'u-ana', mes: '2026-10', linhas: [], pedidos: [], empresa: null, hoje: DEPOIS })
     expect(emBranco.map((aviso) => aviso.texto)).toEqual(['Cabeçalho da folha em branco: a folha sai sem os dados da empresa.'])
   })
+
+  it('a ficha sem "Passou a bater ponto aqui em" vem primeiro, com o link para Pessoas', () => {
+    const avisos = avisosDaFolha({
+      usuarioId: 'u-ana',
+      mes: '2026-10',
+      linhas: [linha('2026-10-16', true)],
+      pedidos: [],
+      empresa: SEM_CNPJ,
+      hoje: DEPOIS,
+      semDataNaFicha: true,
+    })
+    expect(avisos.map((aviso) => aviso.chave)).toEqual(['ficha', 'dias', 'cabecalho'])
+    expect(avisos[0].texto).toBe(
+      'A ficha desta pessoa está sem “Passou a bater ponto aqui em”: a folha sai sem horas extras, horas negativas e saldo. Preencha a data na ficha dela, em Pessoas.',
+    )
+    expect(avisos[0].links).toEqual([{ rotulo: 'Abrir Pessoas', destino: '/administracao#secao-pessoas' }])
+    expect(avisos[0].texto).not.toMatch(/[\u2013\u2014]/)
+    // Com a data na ficha (ou sem dizer nada), o aviso não aparece.
+    for (const semDataNaFicha of [false, undefined]) {
+      const semAviso = avisosDaFolha({ usuarioId: 'u-ana', mes: '2026-10', linhas: [], pedidos: [], empresa: EMPRESA, hoje: DEPOIS, semDataNaFicha })
+      expect(semAviso).toEqual([])
+    }
+  })
 })
 
 describe('como o dia fica com a aprovação do pedido', () => {

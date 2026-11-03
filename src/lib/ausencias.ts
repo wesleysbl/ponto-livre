@@ -268,34 +268,14 @@ export function juntarDiasEAusencias<D extends { dia: string }>(
 /* ------------------------------------------------------------------ */
 
 /**
- * A marca do dia: "Falta justificada — atestado médico".
+ * A marca do dia: o tipo e o período, "Atestado 14:00-16:00" ou "Atestado, dia
+ * inteiro". Duas ausências por horário no mesmo dia viram duas marcas, cada uma
+ * com o seu intervalo. O "outro motivo" leva a observação, que o banco exige
+ * justamente para "outro" dizer alguma coisa no papel.
  *
- * O tipo `falta_justificada` não repete a palavra ("Falta justificada — falta
- * justificada" não diz nada a mais). O tipo `outro` leva a observação, que o
- * banco exige justamente para "outro" dizer alguma coisa no papel.
- *
- * É a marca da FOLHA e do CSV (por `marcaDaAusenciaPorExtenso`). As telas usam
- * `marcaNoDia`, que diz também o período.
- */
-export function marcaDaAusencia(ausencia: Pick<Ausencia, 'tipo' | 'observacao'>): string {
-  switch (ausencia.tipo) {
-    case 'atestado_medico':
-      return 'Falta justificada — atestado médico'
-    case 'falta_justificada':
-      return 'Falta justificada'
-    case 'outro': {
-      const observacao = ausencia.observacao?.trim()
-      return observacao ? `Falta justificada — ${observacao}` : 'Falta justificada — outro motivo'
-    }
-  }
-}
-
-/**
- * A marca do dia nas TELAS (espelho e painel da pessoa): o tipo e o período,
- * "Atestado 14:00-16:00" ou "Atestado, dia inteiro". Duas ausências por horário
- * no mesmo dia viram duas marcas, cada uma com o seu intervalo. O "outro
- * motivo" leva a observação, que o banco exige justamente para "outro" dizer
- * alguma coisa.
+ * É a mesma marca nas telas (espelho e painel da pessoa), na folha e no CSV
+ * (por `marcaDaAusenciaPorExtenso`): a tela e o papel nomeiam o mesmo dia do
+ * mesmo jeito, com o horário.
  *
  * O intervalo é escrito com hífen e sem os segundos do banco. A modalidade e as
  * horas são opcionais no tipo para quem só tem o tipo; a linha do banco sempre
@@ -322,14 +302,13 @@ export function marcaNoDia(
 
 /**
  * A marca para o papel e para a planilha, que não têm botão de "ver atestado":
- * diz por escrito se o documento está guardado.
+ * a de `marcaNoDia`, e por escrito se o documento está guardado.
  */
 export function marcaDaAusenciaPorExtenso(
-  ausencia: Pick<Ausencia, 'tipo' | 'observacao' | 'atestado_path'>,
+  ausencia: Pick<Ausencia, 'tipo' | 'observacao' | 'atestado_path'> &
+    Partial<Pick<Ausencia, 'modalidade' | 'hora_inicio' | 'hora_fim'>>,
 ): string {
-  return ausencia.atestado_path
-    ? `${marcaDaAusencia(ausencia)} (atestado anexado)`
-    : marcaDaAusencia(ausencia)
+  return ausencia.atestado_path ? `${marcaNoDia(ausencia)} (atestado anexado)` : marcaNoDia(ausencia)
 }
 
 /** O atestado é PDF? Aí a tela mostra o link, e não a miniatura. */

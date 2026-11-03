@@ -335,6 +335,8 @@ export function Painel() {
         email: linha.funcionario.email,
         batidas: linha.dias.flatMap((dia) => dia.batidas),
         ausencias: linha.ausencias,
+        // O saldo de cada pessoa (`saldosPorPessoa`, acima). Sem a configuração, as colunas do saldo saem em branco.
+        saldos: saldosPorPessoa.get(linha.funcionario.usuarioId),
       })),
       dados.aprovadores,
     )

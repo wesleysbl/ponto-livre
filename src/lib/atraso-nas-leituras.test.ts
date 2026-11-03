@@ -172,9 +172,10 @@ describe('o CSV', () => {
   const AJUSTE = CABECALHO.indexOf('Ajuste manual')
   const HORAS = CABECALHO.indexOf('Horas do dia')
 
-  it('continua com as mesmas 18 colunas', () => {
-    expect(CABECALHO).toHaveLength(18)
-    for (const linha of linhas) expect(linha.split(SEPARADOR)).toHaveLength(18)
+  it('as 18 colunas de antes continuam no começo, e as do saldo vêm depois', () => {
+    expect(CABECALHO.slice(0, 18).at(-1)).toBe('Horas do dia (decimal)')
+    expect(CABECALHO).toHaveLength(27)
+    for (const linha of linhas) expect(linha.split(SEPARADOR)).toHaveLength(27)
   })
 
   it('marca a batida em atraso na coluna "Origem", com quem aprovou', () => {

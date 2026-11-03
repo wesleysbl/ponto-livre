@@ -12,7 +12,6 @@ import {
   extensaoDoArquivo,
   formatarTamanho,
   juntarDiasEAusencias,
-  marcaDaAusencia,
   marcaDaAusenciaPorExtenso,
   marcaNoDia,
   planoDoAtestado,
@@ -160,19 +159,22 @@ describe('a ausência no mês', () => {
 })
 
 describe('os rótulos', () => {
-  it('a marca diz "Falta justificada" e o tipo, sem repetir palavra', () => {
-    expect(marcaDaAusencia(ausencia())).toBe('Falta justificada — atestado médico')
-    expect(marcaDaAusencia(ausencia({ tipo: 'falta_justificada' }))).toBe('Falta justificada')
-    expect(marcaDaAusencia(ausencia({ tipo: 'outro', observacao: ' doação de sangue ' }))).toBe(
-      'Falta justificada — doação de sangue',
-    )
-  })
-
-  it('no papel e na planilha, diz por escrito se o atestado está guardado', () => {
+  it('no papel e na planilha, a marca das telas, com o período e por escrito se o atestado está guardado', () => {
     expect(marcaDaAusenciaPorExtenso(ausencia({ atestado_path: 'u1/a1.jpg' }))).toBe(
-      'Falta justificada — atestado médico (atestado anexado)',
+      'Atestado, dia inteiro (atestado anexado)',
     )
-    expect(marcaDaAusenciaPorExtenso(ausencia())).toBe('Falta justificada — atestado médico')
+    expect(marcaDaAusenciaPorExtenso(ausencia())).toBe('Atestado, dia inteiro')
+    expect(
+      marcaDaAusenciaPorExtenso(ausencia({ modalidade: 'horario', hora_inicio: '14:00:00', hora_fim: '16:00:00' })),
+    ).toBe('Atestado 14:00-16:00')
+    expect(marcaDaAusenciaPorExtenso(ausencia({ tipo: 'outro', observacao: ' doação de sangue ' }))).toBe(
+      'Outro motivo, dia inteiro: doação de sangue',
+    )
+    for (const tipo of ['atestado_medico', 'falta_justificada', 'outro'] as const) {
+      expect(marcaDaAusenciaPorExtenso(ausencia({ tipo, observacao: 'x', atestado_path: 'u1/a1.pdf' }))).not.toMatch(
+        /[\u2013\u2014]/,
+      )
+    }
   })
 
   it('a marca das telas diz o tipo e o período, com hífen no intervalo e sem travessão', () => {

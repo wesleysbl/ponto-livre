@@ -2659,6 +2659,32 @@ describe('fechar o mês sem surpresa e achar o caminho', () => {
     conferirFumaca(tela)
   })
 
+  it('/folha com ?imprimir=1 e a ficha sem a data: o aviso vem primeiro, com o link para Pessoas, e a impressão NÃO abre', async () => {
+    const imprimir = vi.spyOn(window, 'print').mockImplementation(() => {})
+    const banco = bancoSemPendencia()
+    entrarComo('admin', {
+      ...banco,
+      ponto_funcionarios: banco.ponto_funcionarios.map((ficha) =>
+        ficha.usuario_id === ANA.id ? { ...ficha, bate_ponto_desde: null } : ficha,
+      ),
+    })
+    const tela = await abrir(FOLHA_DE_OUTUBRO)
+    expect(imprimir).toHaveBeenCalledTimes(0)
+    const avisos = [...tela.raiz.querySelectorAll('section[aria-labelledby="antes-de-imprimir"] li')].map(textoDe)
+    expect(avisos).toHaveLength(1)
+    expect(avisos[0]).toContain(
+      'A ficha desta pessoa está sem “Passou a bater ponto aqui em”: a folha sai sem horas extras, horas negativas e saldo.',
+    )
+    const destinos = [...tela.raiz.querySelectorAll('section[aria-labelledby="antes-de-imprimir"] a')].map(
+      (link) => `${textoDe(link)} → ${link.getAttribute('href')}`,
+    )
+    expect(destinos).toEqual(['Abrir Pessoas → /administracao#secao-pessoas'])
+    // O papel diz por que não há saldo.
+    expect(tela.texto()).toContain('Esta folha não traz previsto, abonado e saldo')
+    expect(window.location.search).toBe('?mes=2026-10')
+    conferirFumaca(tela)
+  })
+
   it('"Voltar" da folha leva à pessoa no mesmo mês, e não no corrente', async () => {
     vi.spyOn(window, 'print').mockImplementation(() => {})
     entrarComo('admin', bancoSemPendencia())
@@ -3470,6 +3496,28 @@ describe('o saldo no espelho e no painel da pessoa', () => {
     conferirFumaca(painel)
     expect(resumoDoSaldo(painel.raiz, 'Saldo do período')).toBe(doEspelho)
     expect(linhasDeFalta(painel.raiz)).toHaveLength(faltas)
+
+    // A folha do mesmo mês fecha com os mesmos números, no "Resumo do mês" do fim do papel.
+    vi.spyOn(window, 'print').mockImplementation(() => {})
+    const folha = await abrir(`/folha/${ANA.id}?mes=${anterior}`)
+    conferirFumaca(folha)
+    const resumo = Object.fromEntries(
+      [...folha.raiz.querySelectorAll('dl > div')].map((item) => [
+        item.querySelector('dt')?.textContent ?? '',
+        item.querySelector('dd')?.textContent ?? '',
+      ]),
+    )
+    const saldo = 60 - faltas * 8 * 60
+    expect(resumo).toEqual({
+      'Horas extras': '+1h00',
+      'Horas negativas': `−${faltas * 8}h00`,
+      Faltas: `${faltas} dias`,
+      'Saldo do mês': `−${Math.floor(-saldo / 60)}h${String(-saldo % 60).padStart(2, '0')}`,
+    })
+    for (const coluna of ['Trabalhado', 'Previsto', 'Abonado', 'Saldo']) {
+      expect([...folha.raiz.querySelectorAll('th')].map((th) => th.textContent)).toContain(coluna)
+    }
+    expect([...folha.raiz.querySelectorAll('td')].filter((td) => td.textContent === 'Falta')).toHaveLength(faltas)
   })
 
   /*

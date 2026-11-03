@@ -3,13 +3,15 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import type { Ausencia } from './ausencias'
+import type { DadosDaEmpresa } from './configuracao'
+import type { FolhaDePonto, LinhaDaFolha } from './folha'
 import type { BatidaDoAdmin } from './formato'
 import type { FuncionarioDoPainel } from './painel'
 import type { RegrasDoSaldo, SaldoDoDia } from './saldo'
 
 /*
- * O SALDO NAS LEITURAS DAS TELAS: o espelho de quem bate, o painel da pessoa e
- * o painel geral, num mês de exemplo.
+ * O SALDO NAS LEITURAS: o espelho de quem bate, o painel da pessoa, o painel
+ * geral, a folha impressa e o CSV, num mês de exemplo.
  *
  * O que se prova, com as regras montadas por `regrasDoSaldo`, como nas telas:
  *  • o total do mês soma o abono: o trabalhado do espelho (`montarEspelho`)
@@ -20,7 +22,11 @@ import type { RegrasDoSaldo, SaldoDoDia } from './saldo'
  *  • o resumo diz "Horas extras", "Horas negativas" e as faltas, e é o mesmo
  *    no espelho (o mês) e no painel da pessoa (o período do dia 1 ao último);
  *  • quando o mês começa antes do primeiro dia cobrado, os dias de antes não
- *    entram no saldo, e o resumo diz a data.
+ *    entram no saldo, e o resumo diz a data;
+ *  • a folha traz o trabalhado, o previsto, o abonado e o saldo de cada dia, o
+ *    total com abono e o "Resumo do mês" com os mesmos números das telas;
+ *  • o CSV mantém as 18 colunas de antes, com o mesmo conteúdo, e traz as 9 do
+ *    saldo no fim, com o saldo negativo como número da planilha.
  *
  * O MÊS: outubro de 2026, jornada da semente (segunda a sexta, 08:00-12:00 e
  * 13:00-17:00), tolerância de 10 min, a ficha diz que a pessoa passou a bater
@@ -67,6 +73,18 @@ const { DiaSemBatida } = await import('../components/DiaDoPainel')
 const { DiaDeAusencia } = await import('../components/DiaDeAusencia')
 const { ComposicaoDoTotal, LinhaDoSaldo, ResumoDoSaldoNaTela } = await import('../components/SaldoDoDia')
 const { LinhaDeFuncionario } = await import('../pages/Painel')
+const { FolhaParaImprimir } = await import('../components/FolhaParaImprimir')
+const { montarFolha } = await import('./folha')
+const {
+  CABECALHO,
+  COLUNAS_ANTES_DO_SALDO,
+  FIM_DE_LINHA,
+  gerarCsvDoPeriodo,
+  neutralizarFormula,
+  SEPARADOR,
+  TIPO_DA_LINHA_DE_AUSENCIA,
+  TIPO_DA_LINHA_DE_FALTA,
+} = await import('./csv')
 const { ausenciasPorDia, ausenciasPorPessoa, juntarDiasEAusencias } = await import('./ausencias')
 const { dataBrasileira, formatarDuracao, montarEspelho } = await import('./horas')
 const { JORNADA_SEMENTE } = await import('./jornada')
@@ -446,6 +464,504 @@ describe('o resumo do mês e do período', () => {
 })
 
 /* ------------------------------------------------------------------ */
+/* A folha impressa                                                    */
+/* ------------------------------------------------------------------ */
+
+/** A empresa fictícia da demonstração (`demo/semear.mjs`), sem CNPJ. */
+const EMPRESA: DadosDaEmpresa = {
+  razaoSocial: 'Empresa Exemplo Ltda',
+  nomeFantasia: 'Empresa Exemplo',
+  cnpj: null,
+  endereco: 'Rua das Flores, 100 - Centro',
+  cidade: 'Campinas',
+  uf: 'SP',
+}
+
+const FOLHA = montarFolha({ empresa: EMPRESA, funcionario, mes: MES, batidas: BATIDAS, ausencias: AUSENCIAS, regras: REGRAS })
+
+function linhaDa(folha: FolhaDePonto, dia: number): LinhaDaFolha | undefined {
+  return folha.linhas.find((linha) => linha.dia === `2026-10-${String(dia).padStart(2, '0')}`)
+}
+const linha = (dia: number) => linhaDa(FOLHA, dia)
+
+/** O papel, como `FolhaParaImprimir` o desenha. */
+function papel(folha: FolhaDePonto): string {
+  return renderToStaticMarkup(createElement(FolhaParaImprimir, { folha, emitidaEm: '30/10/2026 18:00' }))
+}
+
+/** O valor de um item do "Resumo do mês": o `<dd>` logo depois do `<dt>` com o rótulo. */
+function valorDoResumo(html: string, rotulo: string): string | undefined {
+  return html.match(new RegExp(`<dt>${rotulo}</dt><dd[^>]*>([^<]*)</dd>`))?.[1]
+}
+
+describe('a folha com o saldo', () => {
+  it('o total trabalhado é o do espelho, dia a dia, e o alto da folha soma o abono', () => {
+    expect(FOLHA.resumo.minutos).toBe(ESPELHO.minutos)
+    expect(FOLHA.resumo.minutos).toBe(SALDO.trabalhadoNoMes)
+    expect(FOLHA.total).toBe('108h05')
+    for (const dia of ESPELHO.dias) expect(FOLHA.linhas.find((l) => l.dia === dia.dia)?.minutos).toBe(dia.minutos)
+    expect(FOLHA.abono).toEqual({ minutos: 44 * 60 + 30, total: '152h35', composicao: '108h05 trabalhadas + 44h30 abonadas' })
+  })
+
+  it('os dias são os da lista do espelho: com batida, de ausência e de falta', () => {
+    const lista = juntarDiasDeFalta(juntarDiasEAusencias(ESPELHO.dias, DO_MES), SALDO.dias)
+    expect(FOLHA.linhas.map((l) => l.dia)).toEqual(lista.map((l) => l.dia))
+  })
+
+  it('Critério 1: atestado de 1 dia: previsto 8h00, abonado 8h00, saldo 0h00, sem falta, e a marca com o período', () => {
+    expect(linha(14)?.saldo).toEqual({ estado: 'cobranca', previsto: '8h00', abonado: '8h00', saldo: '0h00' })
+    expect(linha(14)).toMatchObject({ horarios: [], total: '0h00', falta: false, ausencia: true })
+    expect(linha(14)?.marcas).toEqual(['Atestado, dia inteiro (atestado anexado)'])
+  })
+
+  it('Critério 2: atestado de 3 dias (qua a sex): os três abonados; o sábado seguinte não entra', () => {
+    for (const dia of [21, 22, 23]) {
+      expect(linha(dia)?.saldo).toMatchObject({ previsto: '8h00', abonado: '8h00', saldo: '0h00' })
+      expect(linha(dia)?.marcas).toEqual(['Atestado, dia inteiro (atestado anexado)'])
+    }
+    expect(linha(24)).toBeUndefined()
+  })
+
+  it('Critério 3: atestado 14:00-16:00 com batidas 08-12, 13-14 e 16-17: trabalhado 6h00, abonado 2h00, saldo 0h00', () => {
+    expect(linha(26)?.horarios).toEqual(['08:00', '12:00', '13:00', '14:00', '16:00', '17:00'])
+    expect(linha(26)?.total).toBe('6h00')
+    expect(linha(26)?.saldo).toMatchObject({ previsto: '8h00', abonado: '2h00', saldo: '0h00' })
+    expect(linha(26)?.marcas).toEqual(['Atestado 14:00-16:00 (atestado anexado)'])
+  })
+
+  it('Critério 4: atestado 16:00-16:30 com saída às 16:00 e volta às 16:30: abonado 0h30', () => {
+    expect(linha(27)?.total).toBe('7h30')
+    expect(linha(27)?.saldo).toMatchObject({ abonado: '0h30', saldo: '0h00' })
+    expect(linha(27)?.marcas).toEqual(['Atestado 16:00-16:30 (atestado anexado)'])
+  })
+
+  it('Critério 5: atestados 08-09 e 15-16 com trabalho no meio: as seis batidas e as duas marcas, em ordem', () => {
+    expect(linha(28)?.horarios).toHaveLength(6)
+    expect(linha(28)?.total).toBe('6h00')
+    expect(linha(28)?.saldo).toMatchObject({ abonado: '2h00', saldo: '0h00' })
+    expect(linha(28)?.marcas).toEqual(['Atestado 08:00-09:00 (atestado anexado)', 'Atestado 15:00-16:00 (atestado anexado)'])
+    expect(FOLHA.colunasDeHorario).toBe(6)
+  })
+
+  it('Critério 6: o dia do critério 3 com o atestado cancelado: saldo −2h00, e nenhuma marca do cancelado', () => {
+    expect(linha(29)?.total).toBe('6h00')
+    expect(linha(29)?.saldo).toEqual({ estado: 'cobranca', previsto: '8h00', abonado: '', saldo: '−2h00' })
+    expect(linha(29)?.ausencia).toBe(false)
+    expect(FOLHA.linhas.flatMap((l) => l.marcas).join(' ')).not.toContain('dia errado')
+  })
+
+  it('o dia incompleto: saldo pendente; hoje: em andamento, e a marca de hoje não diz "pendente"', () => {
+    expect(linha(19)?.saldo).toMatchObject({ estado: 'pendente', previsto: '8h00', saldo: 'pendente' })
+    expect(linha(19)?.marcas).toEqual(['Incompleto: fora do total, saldo pendente'])
+    expect(linha(30)?.saldo).toMatchObject({ estado: 'em_andamento', saldo: 'em andamento' })
+    expect(linha(30)?.marcas).toEqual(['Incompleto: fora do total'])
+  })
+
+  it('o dia de falta entra como no espelho, sem horário: "Falta" e −8h00, tantos quantos o resumo cobra', () => {
+    expect(linha(20)).toMatchObject({ horarios: [], total: '0h00', falta: true, ausencia: false, marcas: ['Falta'] })
+    expect(linha(20)?.saldo).toMatchObject({ previsto: '8h00', saldo: '−8h00' })
+    expect(FOLHA.linhas.filter((l) => l.falta)).toHaveLength(SALDO.resumo.faltas)
+  })
+
+  it('atraso, "outro motivo", falta justificada e dia sem jornada, com as palavras das telas', () => {
+    expect(linha(15)?.marcas).toEqual(['Atraso 0h25'])
+    expect(linha(15)?.saldo?.saldo).toBe('−0h25')
+    expect(linha(16)?.marcas).toEqual(['Outro motivo 08:00-10:00: reunião na escola do filho', 'Atraso 2h00'])
+    expect(linha(16)?.saldo).toMatchObject({ abonado: '', saldo: '−2h00' })
+    expect(linha(12)?.marcas).toEqual(['Falta justificada, dia inteiro'])
+    expect(linha(12)?.saldo).toMatchObject({ abonado: '8h00', saldo: '0h00' })
+    // O sábado: previsto zero, e a marca diz por quê.
+    expect(linha(10)?.saldo).toMatchObject({ previsto: '0h00', abonado: '', saldo: '+4h00' })
+    expect(linha(10)?.marcas).toEqual(['Dia sem jornada'])
+    expect(linha(13)?.saldo?.saldo).toBe('+1h00')
+  })
+
+  it('o resumo do mês é o da conta e o das telas: horas extras +5h00, horas negativas −12h25, 1 falta, saldo −7h25', () => {
+    expect(FOLHA.saldo?.resumo).toEqual(SALDO.resumo)
+    expect(FOLHA.saldo).toMatchObject({
+      saldo: '−7h25',
+      previsto: '160h00',
+      abonado: '44h30',
+      extras: '+5h00',
+      negativas: '−12h25',
+      faltas: '1 dia',
+      notaDoInicio: null,
+      notaDeHoje: 'Hoje entra no saldo quando o dia acabar.',
+      toleranciaMinutos: 10,
+    })
+    expect(FOLHA.saldo?.notaDosIncompletos).toBe(
+      'O saldo não inclui 1 dia incompleto: falta batida, e o saldo dele fica pendente até a correção.',
+    )
+    expect(FOLHA.semSaldo).toBeNull()
+  })
+
+  it('o papel desenha as colunas novas, o total com abono, o "Resumo do mês" e nenhum travessão', () => {
+    const html = papel(FOLHA)
+    for (const cabecalho of ['Trabalhado', 'Previsto', 'Abonado', 'Saldo']) expect(html).toContain(`>${cabecalho}</th>`)
+    expect(html).not.toContain('>Observações</th>')
+    expect(html).toContain('Total com abono')
+    expect(html).toContain('152h35')
+    expect(html).toContain('108h05 trabalhadas + 44h30 abonadas')
+    expect(html).toContain('Resumo do mês')
+    expect(valorDoResumo(html, 'Horas extras')).toBe('+5h00')
+    expect(valorDoResumo(html, 'Horas negativas')).toBe('−12h25')
+    expect(valorDoResumo(html, 'Faltas')).toBe('1 dia')
+    expect(valorDoResumo(html, 'Saldo do mês')).toBe('−7h25')
+    // O total da tabela: trabalhado, previsto, abonado e saldo.
+    expect(html).toContain('>108h05</td>')
+    expect(html).toContain('>160h00</td>')
+    expect(html).toContain('>44h30</td>')
+    expect(html).toContain('Atestado 14:00-16:00 (atestado anexado)')
+    expect(html).toContain('em andamento')
+    expect(html).not.toContain('não soma nem desconta horas')
+    expect(html).not.toMatch(/[\u2013\u2014]/)
+    // Debaixo do saldo do mês, só os dias com jornada: o sábado 10 é dia de cobrança, mas não entra nesse número.
+    expect(SALDO.resumo.diasComJornada).toBeLessThan(SALDO.resumo.diasDeCobranca)
+    expect(html).toContain(`${SALDO.resumo.diasComJornada} dias de jornada na conta`)
+    // O papel assinado continua com os dois campos de assinatura e a marca do app.
+    expect(html).toContain('Assinatura do funcionário')
+    expect(html).toContain('Assinatura do responsável')
+  })
+
+  it('a legenda só com o que o mês usa, com a frase das horas extras e das negativas', () => {
+    expect(FOLHA.legenda).toEqual({
+      incompleto: true,
+      ajustado: false,
+      batidaEmAtraso: false,
+      ausencia: true,
+      falta: true,
+      atrasoDaEntrada: true,
+      foraDoSaldo: true,
+      feriado: false,
+      abono: true,
+    })
+    const html = corrido(papel(FOLHA))
+    expect(html).toContain('No resumo do mês, horas extras somam o saldo positivo dos dias e horas negativas somam o negativo, faltas inclusive.')
+    expect(html).toContain('Falta é dia da jornada sem batida e sem abono que cubra o dia.')
+    expect(html).toContain('Atraso é entrada depois do início da jornada além da tolerância')
+    expect(html).toContain('Incompleto: fora do total, porque o dia tem número ímpar de batidas')
+    expect(html).toContain('Atestado e falta justificada abonam a parte da jornada que cobrem')
+    expect(html).toContain('O total com abono, no alto da folha, soma o trabalhado e o abonado.')
+    // O que o mês não usa não entra.
+    expect(html).not.toContain('Ajustado pelo administrador:')
+    expect(html).not.toContain('Em atraso, aprovada:')
+    expect(html).not.toContain('Feriado:')
+  })
+
+  it('o resumo sai mesmo sem nada a somar: 0h00 e "nenhuma"; duas faltas no plural', () => {
+    // Só o sábado 31 é cobrado, sem jornada e sem batida: nada a mais nem a menos.
+    const desde = (dia: string) => semFeriado(regrasDoSaldo(CONFIGURACAO, { jornada: null, batePontoDesde: dia }, '2026-11-02'))
+    const vazio = montarFolha({ empresa: null, funcionario, mes: MES, batidas: [], regras: desde('2026-10-31') })
+    expect(vazio.saldo).toMatchObject({ extras: '0h00', negativas: '0h00', faltas: 'nenhuma', saldo: '0h00' })
+    const html = papel(vazio)
+    expect(valorDoResumo(html, 'Horas extras')).toBe('0h00')
+    expect(valorDoResumo(html, 'Horas negativas')).toBe('0h00')
+    expect(valorDoResumo(html, 'Faltas')).toBe('nenhuma')
+    const duas = montarFolha({ empresa: null, funcionario, mes: MES, batidas: [], regras: desde('2026-10-29') })
+    expect(duas.saldo).toMatchObject({ faltas: '2 dias', extras: '0h00', negativas: '−16h00', saldo: '−16h00' })
+  })
+
+  it('sem as regras, a folha é a de antes e diz por quê; o total trabalhado não muda', () => {
+    const semRegras = montarFolha({ empresa: EMPRESA, funcionario, mes: MES, batidas: BATIDAS, ausencias: AUSENCIAS })
+    expect(semRegras.saldo).toBeNull()
+    expect(semRegras.semSaldo).toBe('Esta folha não traz previsto, abonado e saldo: a jornada da empresa não está cadastrada no sistema.')
+    expect(semRegras.linhas.every((l) => l.saldo === null)).toBe(true)
+    // Sem a conta, o dia de falta não tem como entrar, e não há abono no alto.
+    expect(semRegras.linhas.map((l) => l.dia)).not.toContain('2026-10-20')
+    expect(semRegras.abono).toBeNull()
+    expect(semRegras.total).toBe(FOLHA.total)
+    const html = papel(semRegras)
+    expect(html).toContain('>Observações</th>')
+    expect(html).not.toContain('>Abonado</th>')
+    expect(html).not.toContain('Resumo do mês')
+    expect(html).toContain('Esta folha não traz previsto, abonado e saldo')
+
+    const semData = montarFolha({
+      empresa: EMPRESA,
+      funcionario,
+      mes: MES,
+      batidas: BATIDAS,
+      regras: semFeriado(regrasDoSaldo(CONFIGURACAO, { jornada: null, batePontoDesde: null }, HOJE)),
+    })
+    expect(semData.saldo).toBeNull()
+    expect(semData.semSaldo).toBe(
+      'Esta folha não traz previsto, abonado e saldo: a ficha desta pessoa não tem a data em que ela passou a bater ponto aqui, então nenhum dia é cobrado.',
+    )
+  })
+})
+
+describe('a folha quando o saldo começa no meio do mês', () => {
+  // A ficha é antiga; a "Saldo calculado a partir de" é 15/10, e ela ganha.
+  const regras = semFeriado(
+    regrasDoSaldo({ ...CONFIGURACAO, saldoAPartirDe: '2026-10-15' }, { jornada: null, batePontoDesde: '2025-03-10' }, HOJE),
+  )
+  const folha = montarFolha({ empresa: EMPRESA, funcionario, mes: MES, batidas: BATIDAS, ausencias: AUSENCIAS, regras })
+
+  it('os dias antes do dia 15 ficam sem previsto, saldo e falta; o abono deles ainda soma no total com abono', () => {
+    const antes = folha.linhas.filter((l) => l.dia < '2026-10-15')
+    expect(antes.length).toBeGreaterThan(0)
+    for (const l of antes) {
+      expect(l.saldo).toMatchObject({ estado: 'fora', previsto: '', saldo: '' })
+      expect(l.falta).toBe(false)
+      expect(l.marcas.filter((marca) => marca === 'Falta' || marca === 'Dia sem jornada' || marca.startsWith('Atraso'))).toEqual([])
+    }
+    expect(linhaDa(folha, 14)?.saldo?.abonado).toBe('8h00')
+    expect(linhaDa(folha, 15)?.saldo).toEqual({ estado: 'cobranca', previsto: '8h00', abonado: '', saldo: '−0h25' })
+    expect(folha.linhas.filter((l) => l.falta).map((l) => l.dia)).toEqual(['2026-10-20'])
+    expect(folha.abono?.total).toBe('152h35')
+  })
+
+  it('o resumo é o da conta com a data nova, e a folha diz, perto dele, a partir de que dia o saldo conta', () => {
+    expect(folha.saldo?.resumo).toEqual(calcularSaldoDoMes(MES, BATIDAS, AUSENCIAS, regras).resumo)
+    expect(folha.saldo).toMatchObject({ extras: '0h00', negativas: '−12h25', faltas: '1 dia', saldo: '−12h25', previsto: '80h00' })
+    expect(folha.saldo?.notaDoInicio).toBe(
+      `Saldo calculado a partir de ${dataBrasileira('2026-10-15')}. Os dias antes dessa data ficam fora do saldo.`,
+    )
+    const html = corrido(papel(folha))
+    const frase = html.indexOf('Saldo calculado a partir de 15/10/2026. Os dias antes dessa data ficam fora do saldo.')
+    expect(frase).toBeGreaterThan(html.indexOf('Resumo do mês'))
+    expect(frase).toBeLessThan(html.indexOf('Previsto, abonado e saldo:'))
+    // O mês que começa no primeiro dia cobrado não traz a frase.
+    expect(corrido(papel(FOLHA))).not.toContain('Saldo calculado a partir de')
+  })
+
+  it('com o mês inteiro antes do primeiro dia cobrado, a folha sai sem as colunas do saldo e diz que nenhum dia do mês entra', () => {
+    // Quem passou a bater ponto aqui em 03/11 não tem dia cobrado em outubro.
+    const depois = montarFolha({
+      empresa: EMPRESA,
+      funcionario,
+      mes: MES,
+      batidas: BATIDAS,
+      ausencias: AUSENCIAS,
+      regras: semFeriado(regrasDoSaldo(CONFIGURACAO, { jornada: null, batePontoDesde: '2026-11-03' }, '2026-11-03')),
+    })
+    expect(depois.saldo).toBeNull()
+    expect(depois.semSaldo).toBe(
+      'Esta folha não traz previsto, abonado e saldo: o saldo é calculado a partir de 03/11/2026, e nenhum dia deste mês entra nele.',
+    )
+    expect(depois.linhas.every((l) => l.saldo === null && !l.falta)).toBe(true)
+    const html = papel(depois)
+    expect(html).toContain('>Observações</th>')
+    expect(html).not.toContain('Resumo do mês')
+    expect(corrido(html)).toContain('nenhum dia deste mês entra nele.')
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* O CSV                                                               */
+/* ------------------------------------------------------------------ */
+
+/** Lê o CSV como uma planilha leria: aspas da RFC 4180, `;` e CRLF. */
+function lerCsv(csv: string): string[][] {
+  const linhas: string[][] = []
+  let campo = ''
+  let linhaAtual: string[] = []
+  let entreAspas = false
+  const texto = csv.replace(/^\uFEFF/, '')
+  for (let i = 0; i < texto.length; i += 1) {
+    const c = texto[i]
+    if (entreAspas) {
+      if (c === '"' && texto[i + 1] === '"') {
+        campo += '"'
+        i += 1
+      } else if (c === '"') entreAspas = false
+      else campo += c
+    } else if (c === '"') entreAspas = true
+    else if (c === SEPARADOR) {
+      linhaAtual.push(campo)
+      campo = ''
+    } else if (c === '\r' && texto[i + 1] === '\n') {
+      linhaAtual.push(campo)
+      linhas.push(linhaAtual)
+      linhaAtual = []
+      campo = ''
+      i += 1
+    } else campo += c
+  }
+  return linhas
+}
+
+/** `8:00` -> 480, `-0:25` -> -25: a duração da planilha em minutos, com o sinal. */
+function minutosDaPlanilha(valor: string): number {
+  const [horas, minutos] = valor.replace(/^-/, '').split(':').map(Number)
+  return (valor.startsWith('-') ? -1 : 1) * (horas * 60 + minutos)
+}
+
+describe('o CSV com o saldo', () => {
+  const saldos = calcularSaldoDoPeriodo(OUTUBRO.inicio, OUTUBRO.fim, BATIDAS, AUSENCIAS, REGRAS).dias
+  const pessoa = { ...funcionario, batidas: BATIDAS, ausencias: DO_MES, saldos }
+  const csv = gerarCsvDoPeriodo([pessoa])
+  const [cabecalho, ...linhas] = lerCsv(csv)
+  const col = (nome: (typeof CABECALHO)[number]) => CABECALHO.indexOf(nome)
+  /** A linha que fecha o dia: a última dele. */
+  const fecha = (dia: number) => linhas.filter((l) => l[col('Data')] === `${String(dia).padStart(2, '0')}/10/2026`).at(-1)
+  const soma = (nome: (typeof CABECALHO)[number]) =>
+    linhas.map((l) => l[col(nome)]).filter(Boolean).reduce((total, valor) => total + minutosDaPlanilha(valor), 0)
+
+  it('as 18 primeiras colunas são as de hoje: o cabeçalho e as linhas de um dia de batida, campo por campo', () => {
+    expect(cabecalho.slice(0, COLUNAS_ANTES_DO_SALDO)).toEqual([
+      'Funcionário',
+      'E-mail',
+      'Data',
+      'Dia da semana',
+      'Hora',
+      'Tipo',
+      'Ordem no dia',
+      'Origem',
+      'Ajuste manual',
+      'Motivo do ajuste',
+      'Local',
+      'Distância (m)',
+      'Precisão (m)',
+      'Selfie',
+      'Batidas no dia',
+      'Dia incompleto',
+      'Horas do dia',
+      'Horas do dia (decimal)',
+    ])
+    const doDia = (hora: string, tipo: string, ordem: string, fechamento: string[]) => [
+      'Bruna Costa',
+      'bruna@example.com',
+      '01/10/2026',
+      'quinta-feira',
+      hora,
+      tipo,
+      ordem,
+      'App',
+      'NÃO',
+      '',
+      'No local',
+      '3,00',
+      '12',
+      'SIM',
+      ...fechamento,
+    ]
+    const emBranco = ['', '', '', '']
+    expect(linhas.filter((l) => l[col('Data')] === '01/10/2026').map((l) => l.slice(0, COLUNAS_ANTES_DO_SALDO))).toEqual([
+      doDia('08:00', 'Entrada', '1', emBranco),
+      doDia('12:00', 'Saída para o almoço', '2', emBranco),
+      doDia('13:00', 'Volta do almoço', '3', emBranco),
+      // Só a última batida fecha o dia, como sempre.
+      doDia('17:00', 'Saída', '4', ['4', 'NÃO', '8:00', '8,00']),
+    ])
+    // O texto cru da linha começa como sempre começou, com o `;` e sem aspas.
+    expect(csv.split(FIM_DE_LINHA)[1]).toMatch(/^Bruna Costa;bruna@example\.com;01\/10\/2026;quinta-feira;08:00;Entrada;1;App;NÃO;;No local;3,00;12;SIM;;;;;/)
+  })
+
+  it('as 9 colunas do saldo vêm no fim, e toda linha tem 27 campos', () => {
+    expect(cabecalho).toEqual([...CABECALHO])
+    expect(CABECALHO.slice(COLUNAS_ANTES_DO_SALDO)).toEqual([
+      'Previsto do dia',
+      'Abonado do dia',
+      'Saldo do dia',
+      'Crédito do dia',
+      'Débito do dia',
+      'Falta no dia',
+      'Atraso do dia',
+      'Ausências do dia',
+      'Estado do dia',
+    ])
+    for (const l of linhas) expect(l).toHaveLength(27)
+    expect(csv.endsWith(FIM_DE_LINHA)).toBe(true)
+  })
+
+  it('o total trabalhado é o do espelho, e créditos, débitos e saldos somam o resumo do mês', () => {
+    expect(soma('Horas do dia')).toBe(ESPELHO.minutos)
+    expect(soma('Crédito do dia')).toBe(SALDO.resumo.credito)
+    expect(soma('Débito do dia')).toBe(SALDO.resumo.debito)
+    expect(soma('Saldo do dia')).toBe(SALDO.resumo.saldo)
+    expect(soma('Previsto do dia')).toBe(SALDO.resumo.previsto + 480 + 480) // + o pendente (19) e hoje (30)
+  })
+
+  it('cada dia fecha uma vez só, inclusive o de duas ausências por horário', () => {
+    const dia28 = linhas.filter((l) => l[col('Data')] === '28/10/2026')
+    expect(dia28.map((l) => l[col('Tipo')])).toEqual([
+      TIPO_DA_LINHA_DE_AUSENCIA,
+      TIPO_DA_LINHA_DE_AUSENCIA,
+      'Entrada',
+      'Saída para o almoço',
+      'Volta do almoço',
+      'Saída',
+      'Batida extra',
+      'Batida extra',
+    ])
+    expect(dia28.filter((l) => l[col('Previsto do dia')] !== '')).toHaveLength(1)
+    expect(dia28.filter((l) => l[col('Horas do dia')] !== '')).toHaveLength(1)
+  })
+
+  it('os 6 critérios, na linha que fecha o dia', () => {
+    // Previsto, abonado, saldo, crédito, débito, falta, atraso.
+    const saldo = (dia: number) => fecha(dia)?.slice(COLUNAS_ANTES_DO_SALDO, COLUNAS_ANTES_DO_SALDO + 7)
+    expect(saldo(14)).toEqual(['8:00', '8:00', '0:00', '0:00', '0:00', 'NÃO', '0:00'])
+    for (const dia of [21, 22, 23]) expect(saldo(dia)).toEqual(['8:00', '8:00', '0:00', '0:00', '0:00', 'NÃO', '0:00'])
+    expect(fecha(24)).toBeUndefined()
+    expect(saldo(26)).toEqual(['8:00', '2:00', '0:00', '0:00', '0:00', 'NÃO', '0:00'])
+    expect(fecha(26)?.[col('Horas do dia')]).toBe('6:00')
+    expect(fecha(26)?.[col('Ausências do dia')]).toBe('Atestado 14:00-16:00 (atestado anexado)')
+    expect(saldo(27)?.slice(0, 3)).toEqual(['8:00', '0:30', '0:00'])
+    expect(saldo(28)?.slice(0, 3)).toEqual(['8:00', '2:00', '0:00'])
+    expect(fecha(28)?.[col('Ausências do dia')]).toBe('Atestado 08:00-09:00 (atestado anexado) · Atestado 15:00-16:00 (atestado anexado)')
+    expect(saldo(29)).toEqual(['8:00', '0:00', '-2:00', '0:00', '2:00', 'NÃO', '0:00'])
+    expect(fecha(29)?.[col('Ausências do dia')]).toBe('')
+    for (const dia of [14, 26, 27, 28, 29]) expect(fecha(dia)?.[col('Estado do dia')]).toBe('Fechado')
+  })
+
+  it('a falta vira linha própria; o pendente e hoje ficam sem saldo; o atraso e o "outro motivo" aparecem', () => {
+    const dia20 = linhas.filter((l) => l[col('Data')] === '20/10/2026')
+    expect(dia20).toHaveLength(1)
+    expect(dia20[0][col('Tipo')]).toBe(TIPO_DA_LINHA_DE_FALTA)
+    expect(dia20[0][col('Hora')]).toBe('')
+    expect(dia20[0][col('Batidas no dia')]).toBe('0')
+    expect(dia20[0][col('Horas do dia')]).toBe('0:00')
+    expect(dia20[0][col('Falta no dia')]).toBe('SIM')
+    expect(dia20[0][col('Saldo do dia')]).toBe('-8:00')
+    expect(dia20[0][col('Débito do dia')]).toBe('8:00')
+    expect(dia20[0][col('Estado do dia')]).toBe('Fechado')
+
+    expect(fecha(19)?.slice(COLUNAS_ANTES_DO_SALDO)).toEqual(['8:00', '0:00', '', '', '', '', '', '', 'Saldo pendente'])
+    expect(fecha(30)?.slice(COLUNAS_ANTES_DO_SALDO)).toEqual(['8:00', '0:00', '', '', '', '', '', '', 'Em andamento'])
+    expect(fecha(15)?.[col('Atraso do dia')]).toBe('0:25')
+    expect(fecha(15)?.[col('Saldo do dia')]).toBe('-0:25')
+    expect(fecha(16)?.[col('Ausências do dia')]).toBe('Outro motivo 08:00-10:00: reunião na escola do filho')
+    expect(fecha(16)?.[col('Abonado do dia')]).toBe('0:00')
+    expect(fecha(16)?.[col('Atraso do dia')]).toBe('2:00')
+    // O sábado: o que se trabalhou é saldo positivo, sem previsto.
+    expect(fecha(10)?.slice(COLUNAS_ANTES_DO_SALDO, COLUNAS_ANTES_DO_SALDO + 4)).toEqual(['0:00', '0:00', '4:00', '4:00'])
+    // O futuro (31) não tem linha: nada aconteceu nele.
+    expect(fecha(31)).toBeUndefined()
+  })
+
+  it('o saldo negativo sai com o menos comum, como número: a neutralização não o toca, e o positivo vai sem sinal', () => {
+    expect(fecha(29)?.[col('Saldo do dia')].charCodeAt(0)).toBe(0x2d)
+    expect(neutralizarFormula('-8:00')).toBe('-8:00')
+    expect(fecha(13)?.[col('Saldo do dia')]).toBe('1:00')
+    // Na planilha, as células do saldo são todas número: nenhuma ganhou o apóstrofo nem o "−" das telas.
+    const doSaldo = linhas.map((l) => l[col('Saldo do dia')]).filter(Boolean)
+    expect(doSaldo.length).toBeGreaterThan(0)
+    for (const celula of doSaldo) expect(celula).toMatch(/^-?\d+:\d{2}$/)
+  })
+
+  it('nenhuma célula começa com sinal de fórmula sem o apóstrofo; a que começa com "-" é número', () => {
+    const todas = [cabecalho, ...linhas].flat()
+    expect(todas.filter((celula) => /^[=+@\t\r]/.test(celula))).toEqual([])
+    expect(todas.filter((celula) => celula.startsWith('-')).every((celula) => /^-\d+:\d{2}$/.test(celula))).toBe(true)
+    expect(csv).not.toMatch(/[\u2013\u2014\u2212]/)
+  })
+
+  it('sem o saldo, as colunas novas ficam em branco (menos as ausências) e as 18 de antes são as mesmas', () => {
+    const sem = lerCsv(gerarCsvDoPeriodo([{ ...pessoa, saldos: undefined }])).slice(1)
+    const antes = (l: string[]) => l.slice(0, COLUNAS_ANTES_DO_SALDO)
+    // Sem a conta, só a linha da falta (20/10) some.
+    expect(linhas.filter((l) => l[col('Tipo')] !== TIPO_DA_LINHA_DE_FALTA).map(antes)).toEqual(sem.map(antes))
+    for (const l of sem) {
+      const novas = l.slice(COLUNAS_ANTES_DO_SALDO)
+      expect([...novas.slice(0, 7), novas[8]].every((celula) => celula === '')).toBe(true)
+    }
+    expect(sem.find((l) => l[col('Data')] === '14/10/2026')?.[col('Ausências do dia')]).toBe('Atestado, dia inteiro (atestado anexado)')
+  })
+})
+
+/* ------------------------------------------------------------------ */
 /* O atestado que soma no total, e o feriado                           */
 /* ------------------------------------------------------------------ */
 
@@ -479,5 +995,53 @@ describe('o atestado soma no total do dia, e o feriado nacional aparece como fer
     expect(corrido(desenhar(createElement(ComposicaoDoTotal, { trabalhado: espelho.minutos, abonado: abonadoNoTotal(mes.dias), dias: mes.dias })))).toBe(
       '10h01 trabalhadas + 0h59 de atestado',
     )
+  })
+
+  it('na folha, com as colunas do saldo: o alto diz o total com abono, e o feriado trabalhado diz "Feriado"', () => {
+    const folha = montarFolha({ empresa: null, funcionario, mes: MES, batidas: doDia, ausencias: atestados, regras: comFeriados })
+    expect(folha.total).toBe('10h01')
+    expect(folha.abono).toEqual({ minutos: 59, total: '11h00', composicao: '10h01 trabalhadas + 0h59 de atestado' })
+    expect(linhaDa(folha, 6)?.saldo?.abonado).toBe('0h59')
+    expect(linhaDa(folha, 6)?.marcas).toEqual(['Atestado 15:00-16:00'])
+    expect(linhaDa(folha, 12)?.marcas).toEqual(['Feriado: Nossa Senhora Aparecida'])
+    expect(linhaDa(folha, 12)?.saldo).toMatchObject({ previsto: '0h00', saldo: '+4h00' })
+    expect(folha.legenda).toMatchObject({ feriado: true, abono: true })
+    const html = corrido(papel(folha))
+    expect(html).toContain('Total com abono')
+    expect(html).toContain('11h00')
+    expect(html).toContain('10h01 trabalhadas + 0h59 de atestado')
+    expect(html).toContain('Feriado: Nossa Senhora Aparecida')
+    expect(html).toContain('Feriado: feriado nacional. É dia sem jornada, como o sábado e o domingo')
+    // A tabela continua com o "Total do mês" das batidas.
+    expect(html).toContain('Total do mês')
+  })
+
+  it('na folha, sem a data na ficha: sem as colunas do saldo, mas com o total com abono e a marca "Abonado" no dia', () => {
+    const regras = regrasDoSaldo(CONFIGURACAO, { jornada: null, batePontoDesde: null }, HOJE)
+    const folha = montarFolha({ empresa: null, funcionario, mes: MES, batidas: doDia, ausencias: atestados, regras })
+    expect(folha.saldo).toBeNull()
+    expect(folha.semSaldo).toContain('não tem a data em que ela passou a bater ponto aqui')
+    expect(folha.abono?.total).toBe('11h00')
+    expect(linhaDa(folha, 6)?.saldo).toBeNull()
+    expect(linhaDa(folha, 6)?.marcas).toEqual(['Atestado 15:00-16:00', 'Abonado 0h59'])
+    expect(linhaDa(folha, 12)?.marcas).toEqual(['Feriado: Nossa Senhora Aparecida'])
+    // Mês sem abono: o alto da folha é o "Total do mês" de sempre.
+    const semAbono = montarFolha({ empresa: null, funcionario, mes: MES, batidas: doDia, regras: comFeriados })
+    expect(semAbono.abono).toBeNull()
+    expect(papel(semAbono)).not.toContain('Total com abono')
+  })
+
+  it('no CSV, o abonado do dia aparece mesmo fora da cobrança', () => {
+    const regras = regrasDoSaldo(CONFIGURACAO, { jornada: null, batePontoDesde: null }, HOJE)
+    const saldos = calcularSaldoDoPeriodo(OUTUBRO.inicio, OUTUBRO.fim, doDia, atestados, regras).dias
+    const [cabecalho, ...linhas] = lerCsv(
+      gerarCsvDoPeriodo([{ ...funcionario, batidas: doDia, ausencias: ausenciasPorDia(atestados, OUTUBRO), saldos }]),
+    )
+    const col = (nome: string) => cabecalho.indexOf(nome)
+    const doDia06 = linhas.filter((l) => l[col('Data')] === '06/10/2026').at(-1)
+    expect(doDia06?.[col('Abonado do dia')]).toBe('0:59')
+    expect(doDia06?.[col('Estado do dia')]).toBe('Não cobrado')
+    expect(doDia06?.[col('Saldo do dia')]).toBe('')
+    expect(doDia06?.[col('Previsto do dia')]).toBe('')
   })
 })

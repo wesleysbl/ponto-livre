@@ -15,6 +15,8 @@ import { parametrosDoPeriodo, periodoDoMes } from '../lib/periodo'
 import { lerAprovadoresDoPeriodo, lerPedidosPendentes } from '../lib/pedidos'
 import { lerAusenciasDoPeriodo } from '../lib/faltas'
 import type { Ausencia } from '../lib/ausencias'
+import { mesmaConta } from '../lib/cadastro'
+import { regrasDoSaldo } from '../lib/saldo'
 
 /*
  * A FOLHA DE PONTO DE UMA PESSOA, PRONTA PARA IMPRIMIR E ASSINAR.
@@ -79,6 +81,16 @@ import type { Ausencia } from '../lib/ausencias'
  * `?imprimir=1` não abre a caixa de impressão: a folha espera o clique de quem
  * leu. O botão continua imprimindo — a decisão de imprimir assim é de quem
  * está olhando. E o "Voltar" leva à pessoa NO MESMO MÊS, e não no corrente.
+ * A ficha sem "Passou a bater ponto aqui em" também é aviso, e vem primeiro:
+ * sem a data, nenhum dia é cobrado, e a folha sai sem horas extras, horas
+ * negativas e saldo. O link leva a Pessoas, onde a data se preenche.
+ *
+ * O SALDO NA FOLHA usa as regras que a tela da pessoa usa, montadas por
+ * `regrasDoSaldo`: a configuração (já lida para o cabeçalho, com a jornada, a
+ * tolerância e a "Saldo calculado a partir de") e a ficha ligada a esta conta
+ * (já lida em `gente`), com o "hoje" de Brasília. Nenhuma leitura nova. Sem
+ * configuração, a folha sai sem as colunas do saldo, e o papel diz por quê
+ * (`montarFolha`).
  */
 
 interface Dados {
@@ -197,6 +209,17 @@ export function Folha() {
     return { nome: pessoa.nome, email: pessoa.email }
   }, [dados.gente, dados.batidas, usuarioId])
 
+  /**
+   * As regras do saldo, como em `PainelDaPessoa.tsx`: a configuração e a ficha
+   * ligada a esta conta, por `regrasDoSaldo` e só por ela. Nulas sem a
+   * configuração.
+   */
+  const regras = useMemo(() => {
+    if (!dados.configuracao) return null
+    const ficha = dados.gente.fichas.find((umaFicha) => mesmaConta(umaFicha.usuarioId, usuarioId)) ?? null
+    return regrasDoSaldo(dados.configuracao, ficha, hoje)
+  }, [dados.configuracao, dados.gente.fichas, usuarioId, hoje])
+
   const folha = useMemo(
     () =>
       montarFolha({
@@ -206,8 +229,9 @@ export function Folha() {
         batidas: dados.batidas,
         aprovadores: dados.aprovadores,
         ausencias: dados.ausencias,
+        regras,
       }),
-    [dados.configuracao, funcionario, mes, dados.batidas, dados.aprovadores, dados.ausencias],
+    [dados.configuracao, funcionario, mes, dados.batidas, dados.aprovadores, dados.ausencias, regras],
   )
 
   /** O que falta resolver antes de imprimir. Só conta com os dados na mão. */
@@ -222,8 +246,9 @@ export function Folha() {
             pedidos: dados.pedidos,
             empresa: dados.configuracao,
             hoje,
+            semDataNaFicha: regras !== null && !regras.cobrancaDesde,
           }),
-    [carregando, dados.erro, usuarioId, mes, folha.linhas, dados.pedidos, dados.configuracao, hoje],
+    [carregando, dados.erro, usuarioId, mes, folha.linhas, dados.pedidos, dados.configuracao, hoje, regras],
   )
 
   /** O momento da emissão, fixado na montagem: a folha não muda de hora sozinha. */
@@ -256,9 +281,10 @@ export function Folha() {
    * do StrictMode em desenvolvimento, e o parâmetro sai da URL logo em seguida
    * para um F5 não reabrir a caixa por cima de quem só queria conferir.
    *
-   * COM AVISO, ELA NÃO ABRE: dia incompleto, pedido pendente ou
-   * cabeçalho incompleto ficam na tela, acima do botão, e a impressão espera o
-   * clique. A caixa do navegador por cima esconderia justamente os avisos.
+   * COM AVISO, ELA NÃO ABRE: a ficha sem a data, dia incompleto, pedido
+   * pendente ou cabeçalho incompleto ficam na tela, acima do botão, e a
+   * impressão espera o clique. A caixa do navegador por cima esconderia
+   * justamente os avisos.
    */
   const jaAbriu = useRef(false)
   const pediuImpressao = parametros.get('imprimir') === '1'

@@ -36,6 +36,16 @@
  *    reinterpreta `08/09` no formato americano e transforma 8 de setembro em 9
  *    de agosto. O número decimal vai com vírgula, pelo mesmo motivo.
  * ---------------------------------------------------------------------------
+ *
+ * O SALDO ENTRA NO FIM, NAS COLUNAS 19 A 27
+ * As 18 de antes continuam na mesma ordem, com o mesmo conteúdo: a planilha da
+ * contabilidade montada em cima delas não quebra. As novas seguem a regra das
+ * quatro que fecham o dia: só a última linha do dia as preenche. Os números
+ * vêm de `calcularSaldoDoPeriodo` (`saldo.ts`), entregues prontos por quem
+ * chama (`saldos`); daqui só sai o texto. O saldo do dia vai como duração da
+ * planilha, com o sinal de menos comum quando é negativo (`-8:00`), para ser
+ * lido como número e somar; o positivo vai sem sinal (`1:00`), porque `+` no
+ * começo da célula seria fórmula. Crédito, débito e atraso nunca têm sinal.
  */
 import {
   descreverLocalizacao,
@@ -48,6 +58,7 @@ import {
 import { agruparPorDia, dataBrasileira, diaDaSemana } from './horas'
 import { marcaDaBatida } from './atraso'
 import { juntarDiasEAusencias, marcaDaAusenciaPorExtenso, type Ausencia } from './ausencias'
+import { juntarDiasDeFalta, type EstadoDoDia, type SaldoDoDia } from './saldo'
 import { apelidoDoPeriodo, type Periodo } from './periodo'
 
 export const SEPARADOR = ';'
@@ -59,8 +70,9 @@ export const BOM = '\uFEFF'
 /**
  * O cabeçalho, e a ordem das colunas.
  *
- * AS QUATRO ÚLTIMAS FECHAM O DIA, e é a única regra que o leitor precisa saber:
- * elas são preenchidas SÓ na última batida de cada dia e ficam vazias nas
+ * AS COLUNAS DE "BATIDAS NO DIA" EM DIANTE FECHAM O DIA (as quatro de sempre,
+ * 15 a 18, e as nove do saldo, 19 a 27), e é a única regra que o leitor precisa
+ * saber: elas são preenchidas SÓ na última linha de cada dia e ficam vazias nas
  * outras. É isso que faz "uma linha por batida" conviver com "o total por dia"
  * num arquivo só e ainda retangular:
  *
@@ -93,7 +105,20 @@ export const CABECALHO = [
   'Dia incompleto',
   'Horas do dia',
   'Horas do dia (decimal)',
+  // O saldo do dia, no fim, para não quebrar quem já importa as 18 primeiras.
+  'Previsto do dia',
+  'Abonado do dia',
+  'Saldo do dia',
+  'Crédito do dia',
+  'Débito do dia',
+  'Falta no dia',
+  'Atraso do dia',
+  'Ausências do dia',
+  'Estado do dia',
 ] as const
+
+/** Quantas colunas o arquivo tinha antes das do saldo. */
+export const COLUNAS_ANTES_DO_SALDO = 18
 
 export interface PessoaParaExportar {
   /** Nome que encabeça as linhas desta pessoa no arquivo inteiro. */
@@ -107,6 +132,13 @@ export interface PessoaParaExportar {
    * com as linhas de batida.
    */
   ausencias?: ReadonlyMap<string, Ausencia[]>
+  /**
+   * O saldo de cada dia do período, de `calcularSaldoDoPeriodo` com as regras
+   * da pessoa (`regrasDoSaldo`). Opcional: sem ele (a configuração da empresa
+   * não carregou), as colunas do saldo saem vazias, menos a das ausências, e o
+   * dia de falta não vira linha.
+   */
+  saldos?: readonly SaldoDoDia[]
 }
 
 /**
@@ -118,10 +150,9 @@ const COMECO_DE_FORMULA = /^[=+\-@\t\r]|^\s+[=+\-@]/
 
 /**
  * Número ou duração no formato que ESTE arquivo escreve (`1234,50`, `9:00`),
- * com sinal. Hoje nenhuma coluna sai negativa (as horas e a distância nunca
- * ficam abaixo de zero), mas um saldo negativo (`-0:30`, `-12,50`) é número,
- * não fórmula, e não pode ganhar o apóstrofo: ele viraria texto e a soma da
- * coluna deixaria de contar a célula.
+ * com sinal. O saldo negativo do dia (`-0:30`) é número, não fórmula, e não
+ * pode ganhar o apóstrofo: ele viraria texto e a soma da coluna deixaria de
+ * contar a célula.
  */
 const NUMERO_OU_DURACAO = /^-?\d+(?:,\d+)?$|^-?\d+:\d{2}$/
 
@@ -186,10 +217,65 @@ export function horasEmDecimal(minutos: number): string {
   return numeroBrasileiro(Math.max(0, minutos) / 60, 2)
 }
 
+/**
+ * O saldo do dia como duração da planilha, com sinal: `-8:00`, `1:00`,
+ * `0:00`. O menos é o comum (`-`), e não o tipográfico das telas: é com ele que
+ * a planilha lê a célula como número e a soma da coluna a conta. O positivo
+ * vai sem `+`, que no começo da célula seria fórmula (e ganharia o apóstrofo
+ * de `neutralizarFormula`, virando texto).
+ */
+export function saldoParaPlanilha(minutos: number): string {
+  const redondo = Math.round(minutos)
+  return redondo < 0 ? `-${horasParaPlanilha(-redondo)}` : horasParaPlanilha(redondo)
+}
+
 const SIM = 'SIM'
 const NAO = 'NÃO'
 /** A coluna "Tipo" da linha de ausência. */
 export const TIPO_DA_LINHA_DE_AUSENCIA = 'Ausência'
+/**
+ * A coluna "Tipo" da linha do dia de falta: dia da jornada sem batida e sem
+ * abono, que o espelho e a folha listam. Sem ela, a planilha não teria onde
+ * mostrar o débito do dia.
+ */
+export const TIPO_DA_LINHA_DE_FALTA = 'Falta'
+
+/** A coluna "Estado do dia", com as palavras das telas. */
+export const ESTADO_NA_PLANILHA: Record<EstadoDoDia, string> = {
+  cobranca: 'Fechado',
+  pendente: 'Saldo pendente',
+  em_andamento: 'Em andamento',
+  fora: 'Não cobrado',
+}
+
+/**
+ * As nove colunas do saldo de um dia (19 a 27). Nenhuma conta: o que a tela
+ * não mostra, a planilha também não mostra. Hoje e o dia pendente têm previsto
+ * e abonado, mas saldo, crédito, débito, falta e atraso em branco: o dia ainda
+ * vai mudar. Fora da cobrança, só o abonado (ele soma no total do dia nas
+ * telas), as ausências e o estado.
+ */
+function colunasDoSaldo(saldo: SaldoDoDia | undefined, ausencias: readonly Ausencia[]): string[] {
+  const marcas = ausencias.map(marcaDaAusenciaPorExtenso).join(' · ')
+  if (!saldo) return ['', '', '', '', '', '', '', marcas, '']
+  const estado = ESTADO_NA_PLANILHA[saldo.estado]
+  if (saldo.estado === 'fora')
+    return ['', saldo.abonado > 0 ? horasParaPlanilha(saldo.abonado) : '', '', '', '', '', '', marcas, estado]
+  const previsto = horasParaPlanilha(saldo.previsto)
+  const abonado = horasParaPlanilha(saldo.abonado)
+  if (saldo.estado !== 'cobranca') return [previsto, abonado, '', '', '', '', '', marcas, estado]
+  return [
+    previsto,
+    abonado,
+    saldoParaPlanilha(saldo.saldo),
+    horasParaPlanilha(saldo.credito),
+    horasParaPlanilha(saldo.debito),
+    saldo.falta ? SIM : NAO,
+    horasParaPlanilha(saldo.temAtraso ? saldo.atraso : 0),
+    marcas,
+    estado,
+  ]
+}
 
 /*
  * A BATIDA QUE SAIU SEM LOCALIZAÇÃO tem valor próprio
@@ -221,8 +307,9 @@ const TEXTO_DO_LOCAL: Record<ReturnType<typeof descreverLocalizacao>['nome'], st
  * A coluna "Origem" de uma batida.
  *
  * A BATIDA EM ATRASO APROVADA TEM ORIGEM PRÓPRIA, e ela fica NESTA
- * coluna, e não numa coluna a mais: o arquivo tem sempre as mesmas 18 colunas,
- * na mesma ordem — planilha de contabilidade montada em cima dele não quebra —,
+ * coluna, e não numa coluna a mais: as 18 primeiras colunas são sempre as
+ * mesmas, na mesma ordem (planilha de contabilidade montada em cima delas não
+ * quebra),
  * e quem filtra "Origem" vê as três histórias separadas: o app, o ajuste do
  * admin, e o pedido que alguém conferiu e aprovou. "Ajuste manual" continua
  * SIM nela, que é o que o banco grava (a aprovação nasce pelo caminho do admin).
@@ -251,22 +338,23 @@ export function gerarCsvDoPeriodo(
   const linhas: string[] = [CABECALHO.join(SEPARADOR)]
 
   for (const pessoa of pessoas) {
-    const dias = juntarDiasEAusencias(agruparPorDia(pessoa.batidas), pessoa.ausencias ?? new Map())
+    const comAusencias = juntarDiasEAusencias(agruparPorDia(pessoa.batidas), pessoa.ausencias ?? new Map())
+    const saldoPorDia = new Map((pessoa.saldos ?? []).map((saldo) => [saldo.dia, saldo]))
+    // O dia de falta entra como no espelho e na folha.
+    const dias = pessoa.saldos ? juntarDiasDeFalta(comAusencias, pessoa.saldos) : comAusencias
+
     for (const { dia: diaCivil, batidas: dia, ausencias } of dias) {
+      /** As 14 primeiras colunas de cada linha do dia; as que fecham o dia vêm depois. */
+      const doDia: string[][] = []
+
       /*
-       * A AUSÊNCIA VIRA UMA LINHA PRÓPRIA DO DIA, antes das batidas
-       * dele, nas MESMAS 18 colunas: "Tipo" diz "Ausência", "Origem" diz qual
-       * ("Falta justificada — atestado médico (atestado anexado)"), e as colunas
-       * de batida ficam vazias — não houve horário, local nem foto.
-       *
-       * A SOMA NÃO MUDA: no dia só de ausência, ela fecha o dia com 0 batidas e
-       * "0:00" (para o filtro de "Horas do dia" continuar dando uma linha por
-       * dia); no dia com batidas, quem fecha é a última batida, como sempre, e a
-       * linha da ausência deixa as quatro colunas do fechamento vazias.
+       * A AUSÊNCIA VIRA UMA LINHA PRÓPRIA DO DIA, antes das batidas dele, nas
+       * MESMAS colunas: "Tipo" diz "Ausência", "Origem" diz qual ("Atestado
+       * 14:00-16:00 (atestado anexado)"), e as colunas de batida ficam vazias:
+       * não houve horário, local nem foto.
        */
       for (const ausencia of ausencias) {
-        const fecha = dia === null
-        const campos = [
+        doDia.push([
           pessoa.nome,
           pessoa.email ?? '',
           dataBrasileira(diaCivil),
@@ -281,25 +369,16 @@ export function gerarCsvDoPeriodo(
           '',
           '',
           '',
-          fecha ? '0' : '',
-          fecha ? NAO : '',
-          fecha ? horasParaPlanilha(0) : '',
-          fecha ? horasEmDecimal(0) : '',
-        ]
-        linhas.push(campos.map(escaparCampo).join(SEPARADOR))
+        ])
       }
-      if (!dia) continue
 
-      dia.batidas.forEach((batida, indice) => {
-        // Só a ÚLTIMA batida do dia fecha a conta. Ver o comentário do cabeçalho.
-        const fecha = indice === dia.batidas.length - 1
+      for (const batida of dia?.batidas ?? []) {
         const local = descreverLocalizacao(batida)
-
-        const campos = [
+        doDia.push([
           pessoa.nome,
           pessoa.email ?? '',
-          dataBrasileira(dia.dia),
-          diaDaSemana(dia.dia),
+          dataBrasileira(diaCivil),
+          diaDaSemana(diaCivil),
           formatarHora(batida.registrado_em),
           ROTULO_DO_TIPO[batida.tipo],
           String(batida.ordem_no_dia),
@@ -317,17 +396,51 @@ export function gerarCsvDoPeriodo(
           numeroBrasileiro(batida.distancia_metros, 2),
           numeroBrasileiro(batida.precisao_metros, 0),
           batida.selfie_path ? SIM : NAO,
-          fecha ? String(dia.batidas.length) : '',
-          fecha ? (dia.incompleto ? SIM : NAO) : '',
-          // Dia incompleto vale zero — e o zero é escrito, não deixado em
-          // branco: em branco pareceria "não calculado", e a regra é que ele
-          // conte zero no total (ver "Dia com batida faltando não soma", em
-          // `docs/DEFESA.md`), o que é uma afirmação.
-          fecha ? horasParaPlanilha(dia.minutos) : '',
-          fecha ? horasEmDecimal(dia.minutos) : '',
-        ]
+        ])
+      }
 
-        linhas.push(campos.map(escaparCampo).join(SEPARADOR))
+      // O dia de falta não tem batida nem ausência: uma linha só, que o fecha.
+      if (doDia.length === 0) {
+        doDia.push([
+          pessoa.nome,
+          pessoa.email ?? '',
+          dataBrasileira(diaCivil),
+          diaDaSemana(diaCivil),
+          '',
+          TIPO_DA_LINHA_DE_FALTA,
+          '',
+          '',
+          '',
+          '',
+          '',
+          '',
+          '',
+          '',
+        ])
+      }
+
+      /*
+       * SÓ A ÚLTIMA LINHA DO DIA FECHA A CONTA (ver o comentário do
+       * cabeçalho): a última batida, ou, no dia sem batida, a última ausência
+       * (ou a linha da falta), com 0 batidas e "0:00". Assim o dia fecha uma
+       * vez só, inclusive o de duas ausências por horário, e o filtro de
+       * "Horas do dia" continua dando uma linha por dia. Dia incompleto vale
+       * zero, e o zero é escrito, não deixado em branco: em branco pareceria
+       * "não calculado", e a regra é que ele conte zero no total (ver "Dia com
+       * batida faltando não soma", em `docs/DEFESA.md`), o que é uma afirmação.
+       */
+      const minutos = dia?.minutos ?? 0
+      const fechamento = [
+        String(dia?.batidas.length ?? 0),
+        dia?.incompleto ? SIM : NAO,
+        horasParaPlanilha(minutos),
+        horasEmDecimal(minutos),
+        ...colunasDoSaldo(saldoPorDia.get(diaCivil), ausencias),
+      ]
+      const emBranco = fechamento.map(() => '')
+      doDia.forEach((campos, indice) => {
+        const fecha = indice === doDia.length - 1
+        linhas.push([...campos, ...(fecha ? fechamento : emBranco)].map(escaparCampo).join(SEPARADOR))
       })
     }
   }

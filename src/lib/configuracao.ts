@@ -465,11 +465,13 @@ export function camposFaltandoDaEmpresa(empresa: DadosDaEmpresa): string[] {
 
 /**
  * O endereço da empresa em uma linha, para o cabeçalho impresso.
- * Junta só o que existe — sem vírgula solta nem barra órfã.
+ * Junta só o que existe, sem separador solto nem barra órfã. O separador é o
+ * hífen entre espaços ("Rua das Flores, 100 - Centro - Campinas/SP"), o mesmo
+ * que se usa dentro do próprio endereço; a vírgula já separa o número da rua.
  */
 export function enderecoEmUmaLinha(empresa: DadosDaEmpresa): string {
   const cidadeComUf = [empresa.cidade, empresa.uf].filter(Boolean).join('/')
-  return [empresa.endereco, cidadeComUf].filter(Boolean).join(' — ')
+  return [empresa.endereco, cidadeComUf].filter(Boolean).join(' - ')
 }
 
 /* ------------------------------------------------------------------ */

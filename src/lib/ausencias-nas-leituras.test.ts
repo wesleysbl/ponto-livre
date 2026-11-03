@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ausenciasPorDia, ausenciasPorPessoa, type Ausencia } from './ausencias'
-import { CABECALHO, gerarCsvDoPeriodo, SEPARADOR, TIPO_DA_LINHA_DE_AUSENCIA } from './csv'
+import { CABECALHO, COLUNAS_ANTES_DO_SALDO, gerarCsvDoPeriodo, SEPARADOR, TIPO_DA_LINHA_DE_AUSENCIA } from './csv'
 import { montarFolha } from './folha'
 import type { BatidaDoAdmin } from './formato'
 import { agruparPorDia, montarEspelho, resumirDias } from './horas'
@@ -119,13 +119,13 @@ describe('a folha com ausência', () => {
     const marcados = com.linhas.filter((linha) => linha.ausencia)
     expect(marcados.map((linha) => linha.dia)).toEqual(['2026-10-14', '2026-10-15', '2026-10-16'])
     for (const linha of marcados) {
-      expect(linha.marcas).toContain('Falta justificada — atestado médico (atestado anexado)')
+      expect(linha.marcas).toContain('Atestado, dia inteiro (atestado anexado)')
     }
   })
 
-  it('o dia só de ausência entra sem horário e sem horas', () => {
+  it('o dia só de ausência entra sem horário e sem horas trabalhadas', () => {
     const dia14 = com.linhas.find((linha) => linha.dia === '2026-10-14')
-    expect(dia14).toMatchObject({ horarios: [], minutos: 0, total: '—', incompleto: false, ajustado: false })
+    expect(dia14).toMatchObject({ horarios: [], minutos: 0, total: '0h00', incompleto: false, ajustado: false })
   })
 
   it('o dia com ausência e batida mostra os dois', () => {
@@ -133,7 +133,7 @@ describe('a folha com ausência', () => {
     expect(dia15?.horarios).toEqual(['13:00', '17:00'])
     expect(dia15?.total).toBe('4h00')
     expect(dia15?.ausencia).toBe(true)
-    expect(dia15?.marcas[0]).toContain('Falta justificada')
+    expect(dia15?.marcas[0]).toContain('Atestado')
   })
 
   it('a ausência cancelada não aparece', () => {
@@ -176,15 +176,16 @@ describe('o CSV com ausência', () => {
   it('uma ausência de 3 dias gera 3 dias marcados', () => {
     expect(deAusencia.map((linha) => linha[coluna('Data')])).toEqual(['14/10/2026', '15/10/2026', '16/10/2026'])
     for (const linha of deAusencia) {
-      expect(linha[coluna('Origem')]).toBe('Falta justificada — atestado médico (atestado anexado)')
+      expect(linha[coluna('Origem')]).toBe('Atestado, dia inteiro (atestado anexado)')
       expect(linha[coluna('Hora')]).toBe('')
       expect(linha[coluna('Selfie')]).toBe('')
     }
   })
 
-  it('continua com as mesmas 18 colunas em toda linha', () => {
-    expect(CABECALHO).toHaveLength(18)
-    for (const linha of linhas) expect(linha).toHaveLength(18)
+  it('as 18 colunas de antes, mais as 9 do saldo, em toda linha', () => {
+    expect(COLUNAS_ANTES_DO_SALDO).toBe(18)
+    expect(CABECALHO).toHaveLength(27)
+    for (const linha of linhas) expect(linha).toHaveLength(27)
   })
 
   it('o dia com ausência e batida mostra os dois, e só a última batida fecha o dia', () => {
@@ -218,8 +219,11 @@ describe('o CSV com ausência', () => {
   })
 
   it('as linhas de batida são as mesmas do CSV sem ausência, na mesma ordem', () => {
+    // Nas 18 colunas de antes. A partir da 19ª, o fechamento do dia 15 ganha a
+    // marca da ausência ("Ausências do dia"), que é justamente a diferença.
+    const antes = (linha: string[]) => linha.slice(0, COLUNAS_ANTES_DO_SALDO)
     const deBatida = linhas.filter((linha) => linha[coluna('Tipo')] !== TIPO_DA_LINHA_DE_AUSENCIA)
-    expect(deBatida).toEqual(linhasDoCsv(sem))
+    expect(deBatida.map(antes)).toEqual(linhasDoCsv(sem).map(antes))
   })
 
   it('o "outro motivo" leva a observação, que o banco exige', () => {
@@ -232,7 +236,7 @@ describe('o CSV com ausência', () => {
     })
     const csv = gerarCsvDoPeriodo([{ ...funcionario, batidas: [], ausencias: ausenciasPorDia([outro], OUTUBRO) }])
     // O ";" da observação vem entre aspas e não vira coluna nova.
-    expect(csv).toContain('"Falta justificada — convocação; júri popular"')
+    expect(csv).toContain('"Outro motivo, dia inteiro: convocação; júri popular"')
   })
 })
 
@@ -302,8 +306,9 @@ describe('a ausência por horário nas leituras', () => {
     const com = montarFolha({ empresa: null, funcionario, mes: MES, batidas: BATIDAS, ausencias: POR_HORARIO })
     const dia20 = com.linhas.find((linha) => linha.dia === '2026-10-20')
     expect(dia20).toMatchObject({ ausencia: true, total: '8h00' })
-    // Uma marca de ausência (as outras marcas do dia são as das batidas).
-    expect(dia20?.marcas.filter((marca) => marca.startsWith('Falta justificada'))).toHaveLength(1)
+    // Uma marca de ausência, com o horário (as outras marcas do dia são as das batidas).
+    expect(dia20?.marcas.filter((marca) => marca.startsWith('Atestado'))).toEqual(['Atestado 14:00-16:00'])
+    expect(com.linhas.find((linha) => linha.dia === '2026-10-21')?.marcas).toEqual(['Falta justificada 09:00-10:00'])
     expect(com.linhas.find((linha) => linha.dia === '2026-10-21')).toMatchObject({ ausencia: true, minutos: 0, horarios: [] })
     expect(com.total).toBe('20h00')
     expect(com.total).toBe(sem.total)

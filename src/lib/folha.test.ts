@@ -61,7 +61,7 @@ const EMPRESA: DadosDaEmpresa = {
   razaoSocial: 'Empresa Exemplo Ltda',
   nomeFantasia: 'Empresa Exemplo',
   cnpj: '11222333000181',
-  endereco: 'Rua das Flores, 100 — Centro',
+  endereco: 'Rua das Flores, 100 - Centro',
   cidade: 'Campinas',
   uf: 'SP',
 }
@@ -124,7 +124,7 @@ describe('o total do mês', () => {
     expect(folha.linhas[0].incompleto).toBe(true)
     expect(folha.linhas[0].minutos).toBe(0)
     expect(folha.linhas[0].total).toBe('0h00')
-    expect(folha.linhas[0].marcas).toContain('Incompleto — fora do total')
+    expect(folha.linhas[0].marcas).toContain('Incompleto: fora do total')
     expect(folha.total).toBe('0h00')
     expect(folha.resumo.diasIncompletos).toBe(1)
     // Continua contando como dia COM batida: alguém esteve lá.
@@ -198,7 +198,7 @@ describe('o cabeçalho da empresa', () => {
     expect(cabecalho.nomeFantasia).toBe('Empresa Exemplo')
     // Com máscara: é assim que se confere contra o cartão do CNPJ.
     expect(cabecalho.cnpj).toBe('11.222.333/0001-81')
-    expect(cabecalho.endereco).toBe('Rua das Flores, 100 — Centro — Campinas/SP')
+    expect(cabecalho.endereco).toBe('Rua das Flores, 100 - Centro - Campinas/SP')
     expect(cabecalho.vazio).toBe(false)
   })
 

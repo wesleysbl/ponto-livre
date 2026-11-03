@@ -548,6 +548,8 @@ export function PainelDaPessoa() {
         email: funcionario.email,
         batidas: dados.batidas,
         ausencias: ausenciasDoDia,
+        // O saldo do CSV é o mesmo da tela: sem a configuração, as colunas do saldo saem em branco.
+        saldos: saldoDoPeriodo?.dias,
       },
     ], dados.aprovadores)
     baixarCsv(csv, nomeDoArquivoCsv(periodo, funcionario.nome))

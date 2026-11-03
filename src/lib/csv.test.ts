@@ -11,6 +11,7 @@ import {
   horasParaPlanilha,
   neutralizarFormula,
   nomeDoArquivoCsv,
+  saldoParaPlanilha,
   SEPARADOR,
 } from './csv'
 
@@ -466,6 +467,18 @@ describe('fórmula na planilha — o texto digitado não vira conta nem comando'
     for (const numero of ['0', '12', '1234,50', '9,00', '9:00', '0:00', '153:00', '-12,50', '-0:30', '31/08/2026', '08:32']) {
       expect(neutralizarFormula(numero), numero).toBe(numero)
       expect(escaparCampo(numero), numero).toBe(numero)
+    }
+  })
+
+  it('o saldo do dia vai como duração da planilha: negativo com o menos comum, positivo sem sinal, e passa direto', () => {
+    expect(saldoParaPlanilha(-445)).toBe('-7:25')
+    expect(saldoParaPlanilha(-480)).toBe('-8:00')
+    expect(saldoParaPlanilha(60)).toBe('1:00')
+    expect(saldoParaPlanilha(0)).toBe('0:00')
+    expect(saldoParaPlanilha(-0)).toBe('0:00')
+    for (const minutos of [-445, -25, 0, 60, 240]) {
+      const celula = saldoParaPlanilha(minutos)
+      expect(escaparCampo(celula), celula).toBe(celula)
     }
   })
 

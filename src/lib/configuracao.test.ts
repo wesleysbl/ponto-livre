@@ -404,7 +404,7 @@ describe('camposFaltandoDaEmpresa', () => {
     expect(enderecoEmUmaLinha(semente)).toBe('Campinas/SP')
     expect(
       enderecoEmUmaLinha({ ...semente, endereco: 'Rua X, 100' }),
-    ).toBe('Rua X, 100 — Campinas/SP')
+    ).toBe('Rua X, 100 - Campinas/SP')
     expect(
       enderecoEmUmaLinha({ ...semente, cidade: null, uf: null }),
     ).toBe('')

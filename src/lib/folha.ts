@@ -25,6 +25,36 @@
  * O QUE NÃO MORA AQUI: nada de React, nada de Supabase, nada de CSS. Quem
  * desenha é `components/FolhaParaImprimir.tsx`; quem lê o banco é a tela.
  *
+ * O SALDO TAMBÉM NÃO É CONTA DAQUI
+ * Previsto, abonado, saldo, falta e atraso saem de `calcularSaldoDoMes`
+ * (`saldo.ts`), a mesma chamada do espelho de quem bate o ponto, com as regras
+ * montadas por `regrasDoSaldo`; este arquivo só os escreve, com as mesmas
+ * palavras das telas (`components/SaldoDoDia.tsx`). Sem as regras (a
+ * configuração da empresa não existe) ou sem dia cobrado no mês, a folha sai
+ * como antes, sem as colunas do saldo, e `semSaldo` diz por quê no papel.
+ *
+ * O TOTAL COM ABONO. As telas somam o abonado no total do dia e do mês ("7h46
+ * trabalhadas + 0h59 de atestado"), e o papel não pode dizer outro número: com
+ * abono no mês, o alto da folha mostra o "Total com abono" e a conta dele
+ * (`abono`). A coluna do trabalhado e o "Total do mês" da tabela continuam
+ * sendo só as batidas. O abono vale até sem dia cobrado (a mesma regra de
+ * `saldo.ts`); aí, sem a coluna do abonado, cada dia que abonou ganha a marca
+ * "Abonado 0h59". O feriado nacional ganha a marca "Feriado: Nossa Senhora
+ * Aparecida" no lugar de "Dia sem jornada".
+ *
+ * O RESUMO DO MÊS. Quem fecha o mês olha o fim da folha: quanto a pessoa fez a
+ * mais e quanto ficou devendo. São o crédito e o débito do resumo de
+ * `saldo.ts`, os mesmos números da tela, escritos como "Horas extras" e "Horas
+ * negativas", com as faltas e o saldo, num quadro do fim da folha.
+ *
+ * DESDE QUANDO O SALDO CONTA. O primeiro dia cobrado é a mais nova entre a data
+ * da ficha e a "Saldo calculado a partir de" da configuração
+ * (`RegrasDoSaldo.cobrancaDesde`). Quando o mês começa antes dele, os dias de
+ * antes ficam sem previsto, saldo e falta, e a folha diz, perto do resumo, a
+ * partir de que dia o saldo conta (`cobrancaNoRecorte`); quando o mês inteiro é
+ * anterior, a folha sai sem as colunas do saldo e diz que nenhum dia do mês
+ * entra nele.
+ *
  * ELE NÃO SUBSTITUI O CSV, E OS DOIS CONVIVEM
  * `csv.ts` serve à contabilidade — uma linha por batida, colunas de máquina,
  * abre no Excel. Esta folha serve à assinatura — uma linha por dia, legível em
@@ -54,6 +84,18 @@ import {
   ultimoDiaDoMes,
   type ResumoDeDias,
 } from './horas'
+import {
+  abonadoNoTotal,
+  calcularSaldoDoMes,
+  cobrancaNoRecorte,
+  formatarSaldo,
+  juntarDiasDeFalta,
+  rotuloDoAbono,
+  type EstadoDoDia,
+  type RegrasDoSaldo,
+  type ResumoDoSaldo,
+  type SaldoDoDia,
+} from './saldo'
 
 /* ------------------------------------------------------------------ */
 /* Tipos                                                               */
@@ -85,8 +127,8 @@ export interface CabecalhoDaFolha {
 }
 
 /**
- * Uma linha da tabela: um dia com batida, ou com ausência. Dia sem
- * nenhum dos dois não vira linha.
+ * Uma linha da tabela: um dia com batida, com ausência, ou de falta. Dia sem
+ * nada disso não vira linha.
  */
 export interface LinhaDaFolha {
   /** `dia_civil`, como o banco o carimbou. Serve de chave de lista. */
@@ -98,11 +140,15 @@ export interface LinhaDaFolha {
   /** As horas do dia, em ordem, `HH:MM`. Uma por batida — quatro no dia normal. */
   horarios: string[]
   /**
-   * Minutos do dia, já vindos de `horas.ts`. Zero quando o dia está incompleto
-   * — e zero no dia que só tem ausência: ausência não conta hora.
+   * Minutos do dia, já vindos de `horas.ts`. Zero quando o dia está incompleto,
+   * e zero no dia sem batida (só de ausência, ou de falta): ausência não conta
+   * hora trabalhada.
    */
   minutos: number
-  /** `9h00`. O mesmo texto que o funcionário vê no espelho. `—` no dia só de ausência. */
+  /**
+   * `9h00`. O mesmo texto que o funcionário vê no espelho. `0h00` no dia sem
+   * batida: a marca do dia diz por quê (a ausência, ou "Falta").
+   */
   total: string
   /** Número ímpar de batidas: falta uma para fechar algum par. */
   incompleto: boolean
@@ -121,6 +167,13 @@ export interface LinhaDaFolha {
    */
   semLocalizacao: boolean
   /**
+   * Dia da jornada que passou sem batida e sem abono: a linha entra pela falta,
+   * como no espelho (`juntarDiasDeFalta`), sem horário nenhum.
+   */
+  falta: boolean
+  /** O saldo do dia, já escrito. `null` quando a folha sai sem as colunas do saldo. */
+  saldo: SaldoDaLinha | null
+  /**
    * As marcas do dia, por extenso e em PALAVRA, não em cor.
    *
    * A folha é impressa em preto e branco, muitas vezes numa laser velha. Uma
@@ -130,10 +183,87 @@ export interface LinhaDaFolha {
   marcas: string[]
 }
 
+/**
+ * As três colunas do saldo de um dia, já escritas. Célula vazia (`''`) quando
+ * o dia não tem o que dizer nela: fora da cobrança, a do previsto e a do saldo;
+ * abonado zero, a do abonado (o buraco na coluna é a informação, como na
+ * batida que faltou).
+ */
+export interface SaldoDaLinha {
+  estado: EstadoDoDia
+  /** `8h00`; `0h00` no dia sem jornada (a marca "Dia sem jornada" ou a do feriado diz por quê). */
+  previsto: string
+  abonado: string
+  /** `0h00`, `+1h00`, `−2h00` (U+2212); `pendente` no dia incompleto; `em andamento` hoje. */
+  saldo: string
+}
+
+/** O saldo do mês, já escrito, com as palavras do cartão do espelho (`ResumoDoSaldoNaTela`). */
+export interface SaldoDaFolha {
+  /** O objeto de `calcularSaldoDoMes`, intacto. */
+  resumo: ResumoDoSaldo
+  saldo: string
+  previsto: string
+  abonado: string
+  /**
+   * A soma do saldo positivo dos dias (o crédito do resumo): `+5h00`, ou
+   * `0h00` sem nenhuma. Sai sempre, para ninguém precisar somar nada.
+   */
+  extras: string
+  /** A soma do saldo negativo dos dias, faltas inclusive (o débito): `−12h25`, ou `0h00`. */
+  negativas: string
+  /** `1 dia`, `2 dias`; `nenhuma` sem falta. */
+  faltas: string
+  /**
+   * "Saldo calculado a partir de 15/10/2026. Os dias antes dessa data ficam
+   * fora do saldo." quando o mês começa antes do primeiro dia cobrado. `null`
+   * quando o mês inteiro é cobrado.
+   */
+  notaDoInicio: string | null
+  /** "O saldo não inclui 1 dia incompleto: …". `null` sem dia pendente. */
+  notaDosIncompletos: string | null
+  /** "Hoje entra no saldo quando o dia acabar." quando hoje está no mês. */
+  notaDeHoje: string | null
+  toleranciaMinutos: number
+}
+
+/** O total com abono do alto da folha. */
+export interface AbonoDaFolha {
+  /** O abonado que entra no total (`abonadoNoTotal`, de `saldo.ts`). */
+  minutos: number
+  /** Trabalhado + abonado: `152h35`. */
+  total: string
+  /** `108h05 trabalhadas + 44h30 abonadas`. */
+  composicao: string
+}
+
 /** O nome e o e-mail de quem assina. `''` quando não há e-mail, nunca "sem e-mail". */
 export interface FuncionarioDaFolha {
   nome: string
   email: string
+}
+
+/**
+ * Os itens da legenda que este mês usa. A legenda explica as palavras das
+ * observações; a que não aparece em dia nenhum não precisa de explicação, e o
+ * espaço dela é o que deixa o mês comum de 22 dias, com as colunas do saldo,
+ * numa folha só, com as assinaturas na mesma página das horas.
+ */
+export interface LegendaDaFolha {
+  incompleto: boolean
+  ajustado: boolean
+  /** Batida em atraso aprovada (o pedido de quem esqueceu de bater), não o atraso da entrada. */
+  batidaEmAtraso: boolean
+  ausencia: boolean
+  falta: boolean
+  /** A marca "Atraso 0h25" do saldo. */
+  atrasoDaEntrada: boolean
+  /** Algum dia em andamento (hoje) ou pendente: fica fora do saldo do mês. */
+  foraDoSaldo: boolean
+  /** Algum dia da folha é feriado nacional. */
+  feriado: boolean
+  /** O mês tem abono no total (o alto da folha diz "Total com abono"). */
+  abono: boolean
 }
 
 export interface FolhaDePonto {
@@ -153,6 +283,17 @@ export interface FolhaDePonto {
   resumo: ResumoDeDias
   /** O total do mês já escrito: `168h30`. É o número do rodapé. */
   total: string
+  /** O saldo do mês. `null` sem as colunas do saldo, e aí `semSaldo` diz por quê. */
+  saldo: SaldoDaFolha | null
+  /** A frase que o papel imprime quando a folha sai sem as colunas do saldo. */
+  semSaldo: string | null
+  /**
+   * O abonado que soma no total do mês, já escrito. `null` sem abono nenhum:
+   * aí o alto da folha mostra o "Total do mês" de sempre.
+   */
+  abono: AbonoDaFolha | null
+  /** Que itens da legenda o papel imprime (ver `LegendaDaFolha`). */
+  legenda: LegendaDaFolha
 }
 
 /* ------------------------------------------------------------------ */
@@ -228,8 +369,106 @@ export function colunasDeHorario(batidasPorDia: number[]): number {
   )
 }
 
-const MARCA_INCOMPLETO = 'Incompleto — fora do total'
+const MARCA_INCOMPLETO = 'Incompleto: fora do total'
+/** Com o saldo, o dia incompleto que já passou diz também o que a tela diz dele. */
+const MARCA_INCOMPLETO_COM_SALDO = 'Incompleto: fora do total, saldo pendente'
 const MARCA_AJUSTADO = 'Ajustado pelo administrador'
+const MARCA_FALTA = 'Falta'
+const MARCA_SEM_JORNADA = 'Dia sem jornada'
+
+/* ------------------------------------------------------------------ */
+/* O saldo, escrito                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * As células do saldo de um dia. Nenhuma conta: só a escolha das palavras,
+ * as mesmas de `LinhaDoSaldo` (`components/SaldoDoDia.tsx`). Hoje e o dia
+ * pendente NUNCA mostram o `saldoBruto`: às 10h ele é −7h00, e isso não é
+ * débito de ninguém.
+ */
+function escreverSaldoDoDia(saldo: SaldoDoDia): SaldoDaLinha {
+  // Fora da cobrança, só o abonado: ele soma no total com abono do alto da folha.
+  if (saldo.estado === 'fora')
+    return { estado: saldo.estado, previsto: '', abonado: saldo.abonado > 0 ? formatarDuracao(saldo.abonado) : '', saldo: '' }
+  return {
+    estado: saldo.estado,
+    previsto: formatarDuracao(saldo.semJornada ? 0 : saldo.previsto),
+    abonado: saldo.abonado > 0 ? formatarDuracao(saldo.abonado) : '',
+    saldo:
+      saldo.estado === 'em_andamento'
+        ? 'em andamento'
+        : saldo.estado === 'pendente'
+          ? 'pendente'
+          : formatarSaldo(saldo.saldo),
+  }
+}
+
+/**
+ * As marcas que o saldo acrescenta ao dia: "Feriado: Finados", "Falta",
+ * "Atraso 0h25", "Dia sem jornada". O feriado aparece em qualquer estado, e no
+ * lugar de "Dia sem jornada" (é a razão de o dia não ter jornada). Sem as
+ * colunas do saldo (`comColunas` falso), o dia que abonou ganha "Abonado 0h59".
+ */
+function marcasDoSaldo(saldo: SaldoDoDia | undefined, comColunas: boolean): string[] {
+  if (!saldo) return []
+  const marcas: string[] = []
+  if (saldo.feriado) marcas.push(`Feriado: ${saldo.feriado}`)
+  if (!comColunas && saldo.abonado > 0 && !saldo.incompleto) marcas.push(`Abonado ${formatarDuracao(saldo.abonado)}`)
+  if (saldo.estado === 'fora') return marcas
+  if (saldo.semJornada && !saldo.feriado) marcas.push(MARCA_SEM_JORNADA)
+  if (saldo.estado !== 'cobranca') return marcas
+  if (saldo.falta) marcas.push(MARCA_FALTA)
+  if (saldo.temAtraso) marcas.push(`Atraso ${formatarDuracao(saldo.atraso)}`)
+  return marcas
+}
+
+function plural(quantidade: number, um: string, varios: string): string {
+  return `${quantidade} ${quantidade === 1 ? um : varios}`
+}
+
+/** O resumo do mês, com as palavras de `ResumoDoSaldoNaTela`. */
+function escreverSaldoDoMes(
+  resumo: ResumoDoSaldo,
+  comHoje: boolean,
+  aPartirDe: string | null,
+  toleranciaMinutos: number,
+): SaldoDaFolha {
+  const n = resumo.diasIncompletos
+  return {
+    resumo,
+    saldo: formatarSaldo(resumo.saldo),
+    previsto: formatarDuracao(resumo.previsto),
+    abonado: formatarDuracao(resumo.abonado),
+    extras: formatarSaldo(resumo.credito),
+    negativas: formatarSaldo(-resumo.debito),
+    faltas: resumo.faltas > 0 ? plural(resumo.faltas, 'dia', 'dias') : 'nenhuma',
+    notaDoInicio: aPartirDe
+      ? `Saldo calculado a partir de ${dataBrasileira(aPartirDe)}. Os dias antes dessa data ficam fora do saldo.`
+      : null,
+    notaDosIncompletos:
+      n > 0
+        ? `O saldo não inclui ${plural(n, 'dia incompleto', 'dias incompletos')}: falta batida, e o saldo ${n === 1 ? 'dele fica pendente' : 'deles fica pendente'} até a correção.`
+        : null,
+    notaDeHoje: comHoje ? 'Hoje entra no saldo quando o dia acabar.' : null,
+    toleranciaMinutos,
+  }
+}
+
+/**
+ * Por que a folha sai sem as colunas do saldo. A frase vai para o PAPEL: uma
+ * folha sem previsto nem saldo, calada, pareceria um mês cobrado em zero.
+ * `null` quando algum dia do mês é cobrado.
+ */
+function motivoSemSaldo(regras: RegrasDoSaldo | null | undefined, mes: string): string | null {
+  const inicio = 'Esta folha não traz previsto, abonado e saldo'
+  if (!regras) return `${inicio}: a jornada da empresa não está cadastrada no sistema.`
+  const cobranca = cobrancaNoRecorte(regras.cobrancaDesde, primeiroDiaDoMes(mes), ultimoDiaDoMes(mes))
+  if (cobranca.caso === 'sem_data')
+    return `${inicio}: a ficha desta pessoa não tem a data em que ela passou a bater ponto aqui, então nenhum dia é cobrado.`
+  if (cobranca.caso === 'depois')
+    return `${inicio}: o saldo é calculado a partir de ${dataBrasileira(cobranca.desde)}, e nenhum dia deste mês entra nele.`
+  return null
+}
 
 /**
  * "Em atraso, aprovada por Fulano: 08:00" — uma por batida de atraso do dia.
@@ -280,6 +519,13 @@ export interface EntradaDaFolha {
    * sai sem as marcas de ausência.
    */
   ausencias?: readonly Ausencia[]
+  /**
+   * As regras do saldo da pessoa, de `regrasDoSaldo` (a configuração, a ficha
+   * e o "hoje" de Brasília). Nulas (ou ausentes) = a configuração da empresa
+   * não existe, e a folha sai sem as colunas do saldo, com a frase de
+   * `semSaldo`.
+   */
+  regras?: RegrasDoSaldo | null
 }
 
 /**
@@ -309,17 +555,41 @@ export function montarFolha(entrada: EntradaDaFolha): FolhaDePonto {
   const espelho = montarEspelho(entrada.mes, doMes)
 
   /*
-   * AS AUSÊNCIAS ENTRAM COMO LINHA, E NÃO COMO CONTA. O dia de
-   * ausência sem batida ganha uma linha própria — com a marca e o total em
-   * branco —, e o dia com ausência E batida mostra os dois. `resumo` e `total`,
-   * lá embaixo, continuam saindo de `espelho`, que não sabe que ausência
-   * existe: a soma do mês não muda por causa de uma falta justificada.
+   * AS AUSÊNCIAS ENTRAM COMO LINHA NO TOTAL TRABALHADO, E NÃO COMO CONTA. O dia
+   * de ausência sem batida ganha uma linha própria, com a marca e o trabalhado
+   * zero, e o dia com ausência E batida mostra os dois. `resumo` e `total`, lá
+   * embaixo, continuam saindo de `espelho`, que não sabe que ausência existe: o
+   * total trabalhado não muda por causa de um atestado. O abono que ele traz
+   * soma à parte, no total com abono (`abono`) e no saldo.
    */
   const recorte = { inicio: primeiroDiaDoMes(entrada.mes), fim: ultimoDiaDoMes(entrada.mes) }
-  const dias = juntarDiasEAusencias(espelho.dias, ausenciasPorDia(entrada.ausencias ?? [], recorte))
+  const comAusencias = juntarDiasEAusencias(espelho.dias, ausenciasPorDia(entrada.ausencias ?? [], recorte))
+
+  /*
+   * O SALDO, DA MESMA CONTA DO ESPELHO. As batidas que entram são as mesmas
+   * `doMes`, então o trabalhado de cada dia é o de `espelho`; o dia de falta
+   * entra na lista como no espelho de quem bate o ponto (`juntarDiasDeFalta`).
+   *
+   * A conta roda sempre que há regras: sem dia cobrado no mês, nenhum dia tem
+   * previsto nem saldo, mas o abono e o feriado existem e vão ao papel. As
+   * colunas do saldo e o saldo do mês saem só quando `semSaldo` é nulo.
+   */
+  const semSaldo = motivoSemSaldo(entrada.regras, entrada.mes)
+  const saldoCompleto = entrada.regras
+    ? calcularSaldoDoMes(entrada.mes, doMes, entrada.ausencias ?? [], entrada.regras)
+    : null
+  const saldoDoMes = semSaldo ? null : saldoCompleto
+  const comColunas = saldoDoMes !== null
+  const saldoPorDia = new Map((saldoCompleto?.dias ?? []).map((saldo) => [saldo.dia, saldo]))
+  const dias = saldoDoMes ? juntarDiasDeFalta(comAusencias, saldoDoMes.dias) : comAusencias
+  const abonadoNoMes = abonadoNoTotal(saldoCompleto?.dias ?? [])
+  const cobranca = entrada.regras ? cobrancaNoRecorte(entrada.regras.cobrancaDesde, recorte.inicio, recorte.fim) : null
 
   const linhas: LinhaDaFolha[] = dias.map(({ dia: diaCivil, batidas: dia, ausencias }) => {
-    const marcasDaAusencia = ausencias.map(marcaDaAusenciaPorExtenso)
+    const saldoDoDia = saldoPorDia.get(diaCivil)
+    const saldo = saldoDoDia && comColunas ? escreverSaldoDoDia(saldoDoDia) : null
+    const marcasDaAusencia = [...ausencias.map(marcaDaAusenciaPorExtenso), ...marcasDoSaldo(saldoDoDia, comColunas)]
+    const falta = saldoDoDia?.falta ?? false
 
     if (!dia) {
       return {
@@ -328,18 +598,21 @@ export function montarFolha(entrada: EntradaDaFolha): FolhaDePonto {
         diaDaSemana: diaDaSemana(diaCivil),
         horarios: [],
         minutos: 0,
-        total: '—',
+        total: formatarDuracao(0),
         incompleto: false,
         ajustado: false,
         atraso: false,
-        ausencia: true,
+        ausencia: ausencias.length > 0,
         semLocalizacao: false,
+        falta,
+        saldo,
         marcas: marcasDaAusencia,
       }
     }
 
     const marcas: string[] = [...marcasDaAusencia]
-    if (dia.incompleto) marcas.push(MARCA_INCOMPLETO)
+    // Hoje ímpar é "em andamento", não pendente: só o dia passado diz "saldo pendente".
+    if (dia.incompleto) marcas.push(saldo?.estado === 'pendente' ? MARCA_INCOMPLETO_COM_SALDO : MARCA_INCOMPLETO)
 
     /*
      * A batida em atraso aprovada nasce com `ajuste_manual` (o banco a cria
@@ -369,6 +642,8 @@ export function montarFolha(entrada: EntradaDaFolha): FolhaDePonto {
       atraso: deAtraso.length > 0,
       ausencia: ausencias.length > 0,
       semLocalizacao: semLocalizacao.length > 0,
+      falta,
+      saldo,
       marcas,
     }
   })
@@ -390,6 +665,35 @@ export function montarFolha(entrada: EntradaDaFolha): FolhaDePonto {
       diasIncompletos: espelho.diasIncompletos,
     },
     total: formatarDuracao(espelho.minutos),
+    legenda: {
+      incompleto: linhas.some((linha) => linha.incompleto),
+      ajustado: linhas.some((linha) => linha.ajustado),
+      batidaEmAtraso: linhas.some((linha) => linha.atraso),
+      ausencia: linhas.some((linha) => linha.ausencia),
+      falta: linhas.some((linha) => linha.falta),
+      atrasoDaEntrada: (saldoDoMes?.dias ?? []).some((saldo) => saldo.estado === 'cobranca' && saldo.temAtraso),
+      foraDoSaldo: linhas.some((linha) => linha.saldo?.estado === 'pendente' || linha.saldo?.estado === 'em_andamento'),
+      feriado: linhas.some((linha) => Boolean(saldoPorDia.get(linha.dia)?.feriado)),
+      abono: abonadoNoMes > 0,
+    },
+    saldo:
+      saldoDoMes && entrada.regras
+        ? escreverSaldoDoMes(
+            saldoDoMes.resumo,
+            saldoDoMes.dias.some((saldo) => saldo.estado === 'em_andamento'),
+            cobranca?.caso === 'no_meio' ? cobranca.desde : null,
+            entrada.regras.toleranciaMinutos,
+          )
+        : null,
+    semSaldo,
+    abono:
+      abonadoNoMes > 0
+        ? {
+            minutos: abonadoNoMes,
+            total: formatarDuracao(espelho.minutos + abonadoNoMes),
+            composicao: `${formatarDuracao(espelho.minutos)} trabalhadas + ${formatarDuracao(abonadoNoMes)} ${rotuloDoAbono(saldoCompleto?.dias ?? [])}`,
+          }
+        : null,
   }
 }
 

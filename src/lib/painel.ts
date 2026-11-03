@@ -722,6 +722,9 @@ export function ancoraDoPedido(pedidoId: string): string {
 /** Onde se preenche o cabeçalho da folha: os dados da empresa, na Administração. */
 export const DESTINO_DO_CABECALHO = `/administracao#${ID_DA_SECAO.empresa}`
 
+/** A lista de pessoas da Administração, onde a ficha de cada uma se abre. */
+export const DESTINO_DAS_PESSOAS = `/administracao#${ID_DA_SECAO.pessoas}`
+
 /** "Ana" de "Ana Souza". Nome vazio continua vazio. */
 export function primeiroNome(nome: string): string {
   return nome.trim().split(/\s+/)[0] ?? ''
@@ -905,7 +908,11 @@ export interface AvisoDaFolha {
  *  • "1 pedido de batida em atraso desta pessoa ainda espera decisão." com
  *    "Decidir" (a seção de pedidos da tela da pessoa). Só os pedidos dela, de
  *    dias deste mês;
- *  • "Cabeçalho da folha sem CNPJ: esse campo sai em branco." com "Preencher".
+ *  • "Cabeçalho da folha sem CNPJ: esse campo sai em branco." com "Preencher";
+ *  • a ficha sem "Passou a bater ponto aqui em", com "Abrir Pessoas": sem a
+ *    data, nenhum dia é cobrado, e a folha sai sem horas extras, horas
+ *    negativas e saldo. Vem primeiro, porque é o que mais muda o papel. Só com
+ *    a configuração da empresa na mão (`semDataNaFicha`).
  */
 export function avisosDaFolha(entrada: {
   usuarioId: string
@@ -914,10 +921,21 @@ export function avisosDaFolha(entrada: {
   pedidos: readonly Pick<PedidoDeAtraso, 'usuario_id' | 'dia_civil'>[]
   empresa: DadosDaEmpresa | null
   hoje: string
+  /** A configuração da empresa existe, e a ficha desta pessoa não diz desde quando ela bate ponto aqui. */
+  semDataNaFicha?: boolean
 }): AvisoDaFolha[] {
-  const { usuarioId, mes, linhas, pedidos, empresa, hoje } = entrada
+  const { usuarioId, mes, linhas, pedidos, empresa, hoje, semDataNaFicha = false } = entrada
   const periodo = periodoDoMes(mes)
   const avisos: AvisoDaFolha[] = []
+
+  if (semDataNaFicha) {
+    avisos.push({
+      chave: 'ficha',
+      texto:
+        'A ficha desta pessoa está sem “Passou a bater ponto aqui em”: a folha sai sem horas extras, horas negativas e saldo. Preencha a data na ficha dela, em Pessoas.',
+      links: [{ rotulo: 'Abrir Pessoas', destino: DESTINO_DAS_PESSOAS }],
+    })
+  }
 
   const incompletos = linhas.filter((linha) => linha.incompleto && linha.dia !== hoje).map((linha) => linha.dia)
   if (incompletos.length > 0) {
