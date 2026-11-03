@@ -320,6 +320,32 @@ export function regrasDoSaldo(
   }
 }
 
+/**
+ * Onde o primeiro dia cobrado (`RegrasDoSaldo.cobrancaDesde`) cai num recorte
+ * de dias (`inicio` a `fim`, inclusive: o mês do espelho, o período do painel
+ * da pessoa), para a tela dizer desde quando o saldo conta:
+ *   • `sem_data`: a ficha não tem a data, e nenhum dia é cobrado;
+ *   • `desde_o_inicio`: o recorte começa no primeiro dia cobrado ou depois
+ *     dele, e não há o que avisar;
+ *   • `no_meio`: o recorte começa antes, e os dias até a véspera de `desde`
+ *     ficam fora do saldo;
+ *   • `depois`: o recorte acaba antes de `desde`, e nenhum dia dele conta.
+ * Sem o aviso, quem abre o mês em que o saldo passou a contar veria os dias de
+ * antes sem saldo e sem falta, e acharia que eles foram esquecidos. As datas
+ * são `AAAA-MM-DD`, comparadas como texto (a forma ISO ordena).
+ */
+export type CobrancaNoRecorte =
+  | { caso: 'sem_data' }
+  | { caso: 'desde_o_inicio' }
+  | { caso: 'no_meio' | 'depois'; desde: string }
+
+export function cobrancaNoRecorte(cobrancaDesde: string | null, inicio: string, fim: string): CobrancaNoRecorte {
+  if (!cobrancaDesde) return { caso: 'sem_data' }
+  if (cobrancaDesde <= inicio) return { caso: 'desde_o_inicio' }
+  if (cobrancaDesde > fim) return { caso: 'depois', desde: cobrancaDesde }
+  return { caso: 'no_meio', desde: cobrancaDesde }
+}
+
 /* ------------------------------------------------------------------ */
 /* Trechos                                                             */
 /* ------------------------------------------------------------------ */

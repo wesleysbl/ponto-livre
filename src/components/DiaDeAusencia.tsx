@@ -3,8 +3,9 @@ import { CalendarX2, FileText } from 'lucide-react'
 import { marcaNoDia, type Ausencia } from '../lib/ausencias'
 import { ancoraDoDia } from '../lib/corrigir'
 import { formatarDuracao, rotuloDoDia } from '../lib/horas'
-import type { CoberturaDoDia } from '../lib/saldo'
+import type { CoberturaDoDia, SaldoDoDia } from '../lib/saldo'
 import { EtiquetasDoDia } from './EtiquetasDoDia'
+import { LinhaDoSaldo, TotalDoDia } from './SaldoDoDia'
 
 /*
  * A AUSÊNCIA NAS LISTAS DE DIAS, no espelho do colaborador e no painel da
@@ -16,17 +17,23 @@ import { EtiquetasDoDia } from './EtiquetasDoDia'
  *    batidas continuam contando: a marca não muda o trabalhado.
  *  • `DiaDeAusencia`: o dia que só tem a ausência. Ganha um cartão próprio, do
  *    mesmo formato do dia com batidas, com "sem horas" no lugar do total
- *    ("0h00" pareceria um dia trabalhado que deu errado).
+ *    ("0h00" pareceria um dia trabalhado que deu errado). O dia em que a
+ *    ausência abonou mostra as horas abonadas no lugar do "sem horas" ("8h00"
+ *    e "horas de atestado", de `TotalDoDia`): o atestado soma no total.
  *
  * O PERÍODO NA MARCA. A marca diz o tipo e o intervalo ("Atestado 14:00-16:00",
  * "Atestado, dia inteiro", de `marcaNoDia`), uma por ausência, por dias
- * primeiro e os intervalos em ordem de início.
+ * primeiro e os intervalos em ordem de início. O intervalo não se parte na
+ * linha: a 320 px, "09:00-" numa linha e "10:00" na outra parecem dois
+ * horários soltos (`TextoDaMarca`).
  *
- * O ABONO NA MARCA, QUANDO A TELA O TIVER. Cada marca diz também quanto a
- * ausência abonou ("Atestado 14:00-16:00 · abonou 2h00"), ou que "outro motivo"
- * não abona, a partir das coberturas do saldo do dia (`SaldoDoDia.coberturas`,
- * de `saldo.ts`). A conta é do saldo, e não daqui: sem as coberturas, a marca
- * sai só com o tipo e o período.
+ * O ABONO NA MARCA. Cada marca diz também quanto a ausência abonou ("Atestado
+ * 14:00-16:00 · abonou 2h00"), ou que "outro motivo" não abona, a partir das
+ * coberturas do saldo do dia (`SaldoDoDia.coberturas`, de `saldo.ts`). A conta
+ * é do saldo, e não daqui: sem as coberturas (as regras do saldo não
+ * carregaram), a marca sai só com o tipo e o período. A linha de previsto,
+ * abonado e saldo do dia só de ausência é a de `LinhaDoSaldo`, a mesma do dia
+ * com batidas.
  *
  * O botão do atestado abre o `VisorDeAtestado`; quem o desenha é a tela, que
  * sabe se a pessoa pode ver (o admin vê todos; o colaborador, os próprios; e
@@ -50,11 +57,35 @@ interface PropsDaMarca {
   coberturas?: readonly CoberturaDoDia[]
 }
 
-/** "abonou 2h00", "não abona" ou nada (fora da cobrança, ou sem nada abonado). */
+/** "abonou 2h00", "não abona" ou nada (sem nada abonado: o dia sem jornada, o futuro). */
 function abonoDaMarca(cobertura: CoberturaDoDia | undefined): string | null {
   if (!cobertura) return null
   if (!cobertura.abona) return 'não abona'
   return cobertura.minutosAbonados > 0 ? `abonou ${formatarDuracao(cobertura.minutosAbonados)}` : null
+}
+
+/** O intervalo da marca ("14:00-16:00"), que nunca se parte no hífen. */
+const INTERVALO = /(\d{2}:\d{2}-\d{2}:\d{2})/
+
+/**
+ * O texto da marca, com o intervalo de horário inteiro numa linha só. O resto
+ * (o tipo, a observação do "outro motivo") quebra como qualquer texto, para a
+ * marca caber a 320 px.
+ */
+function TextoDaMarca({ texto }: { texto: string }) {
+  return (
+    <>
+      {texto.split(INTERVALO).map((trecho, indice) =>
+        indice % 2 === 1 ? (
+          <span key={indice} className="whitespace-nowrap">
+            {trecho}
+          </span>
+        ) : (
+          trecho
+        ),
+      )}
+    </>
+  )
 }
 
 export function MarcaDeAusencia({ ausencias, aoAbrirAtestado, coberturas }: PropsDaMarca) {
@@ -72,7 +103,7 @@ export function MarcaDeAusencia({ ausencias, aoAbrirAtestado, coberturas }: Prop
           >
             <CalendarX2 size={13} aria-hidden="true" className="mt-0.5 shrink-0" />
             <span className="min-w-0 flex-1 break-words">
-              {marcaNoDia(ausencia)}
+              <TextoDaMarca texto={marcaNoDia(ausencia)} />
               {abono && <span className="text-plat-dim">{` · ${abono}`}</span>}
             </span>
             {ausencia.atestado_path && aoAbrirAtestado && (
@@ -100,6 +131,8 @@ interface PropsDoDia {
   fimDeSemana?: boolean
   /** O nome do feriado nacional (`DiaDaLista.feriado`, do painel): ganha a etiqueta. */
   feriado?: string | null
+  /** O saldo do dia, da mesma conta do mês (`saldo.ts`). Sem ele, só a marca. */
+  saldo?: SaldoDoDia
   /** O pé do cartão: as ações do admin sobre o dia. Sem ele, o cartão termina na marca. */
   children?: ReactNode
 }
@@ -110,6 +143,7 @@ export function DiaDeAusencia({
   aoAbrirAtestado,
   fimDeSemana = false,
   feriado = null,
+  saldo,
   children,
 }: PropsDoDia) {
   return (
@@ -122,10 +156,15 @@ export function DiaDeAusencia({
           </p>
           <p className="mt-0.5 font-mono text-[0.62rem] tracking-wider text-faint">ausência</p>
         </div>
-        <span className="shrink-0 text-[0.68rem] text-mute">sem horas</span>
+        {saldo && saldo.abonado > 0 ? (
+          <TotalDoDia trabalhado={0} saldo={saldo} />
+        ) : (
+          <span className="shrink-0 text-[0.68rem] text-mute">sem horas</span>
+        )}
       </div>
+      {saldo && <LinhaDoSaldo saldo={saldo} />}
       <div className="pb-2">
-        <MarcaDeAusencia ausencias={ausencias} aoAbrirAtestado={aoAbrirAtestado} />
+        <MarcaDeAusencia ausencias={ausencias} aoAbrirAtestado={aoAbrirAtestado} coberturas={saldo?.coberturas} />
       </div>
       {children && <div className="border-t border-hair px-4 py-2">{children}</div>}
     </li>

@@ -1,15 +1,17 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { AlertTriangle, CalendarX2, Camera, CameraOff, Clock, LocateOff, MapPin, PencilLine, Plus } from 'lucide-react'
 import { descreverLocalizacao, formatarHora, type BatidaDoAdmin } from '../lib/formato'
-import { formatarDuracao, rotuloDoDia, type DiaDoEspelho } from '../lib/horas'
+import { rotuloDoDia, type DiaDoEspelho } from '../lib/horas'
 import { ancoraDoDia } from '../lib/corrigir'
 import { rotuloNaLista } from '../lib/painel'
 import { useMiniaturasDoDia } from '../hooks/useMiniaturasDoDia'
 import { MarcaDeAjuste, MarcaDeAtraso } from './MarcaDaBatida'
 import { MarcaDeAusencia } from './DiaDeAusencia'
 import { EtiquetasDoDia } from './EtiquetasDoDia'
+import { LinhaDoSaldo, TotalDoDia } from './SaldoDoDia'
 import { Botao, Etiqueta } from './ui'
 import type { Ausencia } from '../lib/ausencias'
+import type { SaldoDoDia } from '../lib/saldo'
 import type { PedidoDeAtraso } from '../lib/atraso'
 
 /*
@@ -42,6 +44,16 @@ import type { PedidoDeAtraso } from '../lib/atraso'
  * `dia-AAAA-MM-DD` (`ancoraDoDia`), e o sábado e o domingo levam a etiqueta
  * "fim de semana". O feriado nacional leva a etiqueta "feriado", com o nome
  * dele (`EtiquetasDoDia`).
+ *
+ * O TOTAL DO DIA SOMA O ATESTADO: o número do canto é o trabalhado mais o
+ * abonado do saldo do dia, com a conta embaixo ("6h01 trabalhadas + 0h59 de
+ * atestado"), em `TotalDoDia`.
+ *
+ * O SALDO DO DIA: a mesma `LinhaDoSaldo` do espelho de quem bate, com os
+ * números de `saldo.ts`. Hoje diz "em andamento", e o dia ímpar de antes de
+ * hoje diz "saldo pendente": nenhum dos dois vira débito. O dia sem batida
+ * (`DiaSemBatida`) mostra a falta com o débito dela, para quem administra ver
+ * de onde vem o saldo do período.
  *
  * NÃO HÁ AVISO DE RÓTULO TROCADO. A batida inserida depois não entra no fim da
  * fila com o rótulo errado: o banco (`ponto_reordenar_dia`) reorganiza entrada,
@@ -86,9 +98,18 @@ interface Props {
   feriado?: string | null
   /** `pedido_id -> quem aprovou`, para a marca da batida em atraso. */
   aprovadores?: ReadonlyMap<string, string | null>
-  /** Ausências ativas que cobrem este dia: a marca aparece, as horas não mudam. */
+  /**
+   * Ausências ativas que cobrem este dia: a marca aparece, e o que elas
+   * abonam soma no total do dia (pelo `saldo`).
+   */
   ausencias?: readonly Ausencia[]
   aoAbrirAtestado?: (ausencia: Ausencia) => void
+  /**
+   * O saldo do dia, de `saldo.ts`: previsto, abonado e saldo, embaixo do
+   * cabeçalho, e o abono no total. Sem ele (as regras não carregaram), o
+   * cartão mostra só as batidas e o trabalhado.
+   */
+  saldo?: SaldoDoDia
   /**
    * Este dia é hoje (`diaCivilDeHoje`). Ímpar e hoje é "Em andamento": a
    * pessoa ainda pode bater, e a tela não empurra ninguém a inserir nada.
@@ -124,6 +145,7 @@ export function DiaDoPainel({
   destacado = false,
   pedidos = [],
   aoVerPedido,
+  saldo,
 }: Props) {
   const emAndamento = dia.incompleto && ehHoje
   const faltaBatida = dia.incompleto && !ehHoje
@@ -160,11 +182,7 @@ export function DiaDoPainel({
           </span>
         )}
         {emAndamento && <Etiqueta tom="neutro">Em andamento</Etiqueta>}
-        {!dia.incompleto && (
-          <span className="shrink-0 font-mono text-lg text-plat tabular-nums">
-            {formatarDuracao(dia.minutos)}
-          </span>
-        )}
+        {!dia.incompleto && <TotalDoDia trabalhado={dia.minutos} saldo={saldo} />}
       </div>
 
       {faltaBatida && !temPedido && (
@@ -185,7 +203,9 @@ export function DiaDoPainel({
         <p className="px-4 pb-1 text-xs leading-relaxed text-mute">A pessoa ainda pode bater hoje.</p>
       )}
 
-      <MarcaDeAusencia ausencias={ausencias} aoAbrirAtestado={aoAbrirAtestado} />
+      {saldo && <LinhaDoSaldo saldo={saldo} />}
+
+      <MarcaDeAusencia ausencias={ausencias} aoAbrirAtestado={aoAbrirAtestado} coberturas={saldo?.coberturas} />
 
       <ul className="mt-1 divide-y divide-hair border-t border-hair">
         {dia.batidas.map((batida, indice) => {
@@ -395,16 +415,24 @@ interface PropsDoDiaSemBatida {
   fimDeSemana?: boolean
   /** O nome do feriado nacional: a linha ganha a etiqueta "feriado", como a do fim de semana. */
   feriado?: string | null
-  aoInserirNesteDia: (dia: string) => void
+  /**
+   * Abre a caixa de inserir com o dia. Sem ele, a linha não oferece inserir:
+   * é o espelho de quem bate ponto, que usa a mesma linha para o dia de falta,
+   * e a RLS recusaria a batida inserida.
+   */
+  aoInserirNesteDia?: (dia: string) => void
   /**
    * Abre a caixa de ausência com o dia. Sem ele, a linha não oferece lançar
    * falta: é a própria ficha de quem está logado, e quem é dono do ponto não
-   * lança a própria ausência (a tela diz o porquê uma vez, no topo).
+   * lança a própria ausência (a tela diz o porquê uma vez, no topo), ou é o
+   * espelho de quem bate ponto.
    */
   aoLancarFaltaNesteDia?: (dia: string) => void
   /** Os pedidos de batida em atraso deste dia que esperam decisão. */
   pedidos?: readonly PedidoDeAtraso[]
   aoVerPedido?: (pedido: PedidoDeAtraso) => void
+  /** O saldo do dia: no dia com jornada que já passou, a falta e o débito dela. */
+  saldo?: SaldoDoDia
 }
 
 /**
@@ -418,6 +446,11 @@ interface PropsDoDiaSemBatida {
  * Só existe para dia de hoje ou de antes: dia futuro vazio não entra na lista.
  * "Lançar falta neste dia" abre a caixa de ausência já com a data; o dia que
  * já tem ausência não ganha o link (o banco recusa duas ausências no mesmo dia).
+ *
+ * NO ESPELHO DE QUEM BATE PONTO, A MESMA LINHA É O DIA DE FALTA: "Seg, 19 de
+ * out · Sem batida" e, embaixo, "Previsto 8h00 · Falta · Saldo −8h00", sem os
+ * dois botões. Lá ela só aparece no dia que `saldo.ts` marcou com falta
+ * (`juntarDiasDeFalta`).
  */
 export function DiaSemBatida({
   dia,
@@ -427,6 +460,7 @@ export function DiaSemBatida({
   aoLancarFaltaNesteDia,
   pedidos = [],
   aoVerPedido,
+  saldo,
 }: PropsDoDiaSemBatida) {
   return (
     <li
@@ -438,19 +472,25 @@ export function DiaSemBatida({
         <EtiquetasDoDia fimDeSemana={fimDeSemana} feriado={feriado} />
         <span className="text-xs text-mute">· Sem batida</span>
       </p>
+      {/* Só o dia com jornada: o domingo e o feriado vazios já dizem tudo com "Sem batida". */}
+      {saldo && !saldo.semJornada && <LinhaDoSaldo saldo={saldo} className="basis-full pb-2" />}
       <PedidosEsperandoNoDia pedidos={pedidos} aoVer={aoVerPedido} className="basis-full" />
-      <div className="flex flex-wrap gap-x-4">
-        <BotaoDoDia aoClicar={() => aoInserirNesteDia(dia)}>
-          <PencilLine size={13} aria-hidden="true" />
-          Inserir batida neste dia
-        </BotaoDoDia>
-        {aoLancarFaltaNesteDia && (
-          <BotaoDoDia aoClicar={() => aoLancarFaltaNesteDia(dia)}>
-            <CalendarX2 size={13} aria-hidden="true" />
-            Lançar falta neste dia
-          </BotaoDoDia>
-        )}
-      </div>
+      {(aoInserirNesteDia || aoLancarFaltaNesteDia) && (
+        <div className="flex flex-wrap gap-x-4">
+          {aoInserirNesteDia && (
+            <BotaoDoDia aoClicar={() => aoInserirNesteDia(dia)}>
+              <PencilLine size={13} aria-hidden="true" />
+              Inserir batida neste dia
+            </BotaoDoDia>
+          )}
+          {aoLancarFaltaNesteDia && (
+            <BotaoDoDia aoClicar={() => aoLancarFaltaNesteDia(dia)}>
+              <CalendarX2 size={13} aria-hidden="true" />
+              Lançar falta neste dia
+            </BotaoDoDia>
+          )}
+        </div>
+      )}
     </li>
   )
 }

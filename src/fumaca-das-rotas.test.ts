@@ -392,6 +392,8 @@ const { default: App } = await import('./App')
 const { Modal } = await import('./components/ui')
 const { diaCivilDeHoje } = await import('./lib/formato')
 const { somarDias } = await import('./lib/ausencias')
+const { dataBrasileira, mesAnterior, rotuloDoMes, ultimoDiaDoMes } = await import('./lib/horas')
+const { feriadoNacional } = await import('./lib/feriados')
 
 /* ------------------------------------------------------------------ */
 /* O banco simulado                                                    */
@@ -2064,7 +2066,10 @@ describe('corrigir qualquer dia: todos os dias na tela da pessoa e "Corrigir pon
     })
     const tela = await abrir(`/painel/${ANA.id}?de=2026-08-01&ate=2026-08-31`)
     const segunda = textoDe(diaDaLista(tela.raiz, '2026-08-10'))
-    expect(segunda).toContain('sem horas')
+    // O atestado do dia inteiro abona a jornada e soma no total do dia, mesmo
+    // antes do primeiro dia cobrado: 8h00, e não "sem horas".
+    expect(segunda).toContain('8h00horas de atestado')
+    expect(segunda).not.toContain('sem horas')
     expect(segunda).toContain('Inserir batida neste dia')
     // O dia que já tem ausência não oferece lançar outra (o banco recusaria).
     expect(segunda).not.toContain('Lançar falta neste dia')
@@ -3255,9 +3260,469 @@ describe('bater no celular sem recomeçar nem levar susto', () => {
     expect(tela.texto()).not.toMatch(/incompleto/)
     // O rodapé, inteiro: de onde saem as horas e o que fica fora do total.
     expect([...tela.raiz.querySelectorAll('footer')].map((pe) => (pe.textContent ?? '').replace(/\s+/g, ' ').trim())).toEqual([
-      'As horas saem das suas batidas, com o horário oficial do ponto. Dia com batida faltando não entra no total até ser corrigido.',
+      'As horas saem das suas batidas, com o horário oficial do ponto, mais as horas abonadas por atestado ou falta justificada. Dia com batida faltando não entra no total até ser corrigido, e o saldo dele fica pendente até lá. O saldo compara as horas com a sua jornada: atestado médico e falta justificada abonam a parte da jornada que cobrem. O dia da jornada que passou sem batida e sem abono aparece na lista como falta.',
     ])
     conferirFumaca(tela)
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* O saldo no espelho e no painel da pessoa                            */
+/* ------------------------------------------------------------------ */
+
+describe('o saldo no espelho e no painel da pessoa', () => {
+  /** "Saldo do mês" ou "Saldo do período": o bloco inteiro do resumo, sem o rótulo. */
+  function resumoDoSaldo(raiz: HTMLElement, rotulo: string): string | null {
+    const titulo = [...raiz.querySelectorAll('p')].find((p) => p.textContent === rotulo)
+    if (!titulo?.parentElement) return null
+    return (titulo.parentElement.textContent ?? '').replace(rotulo, '').replace(/\s+/g, ' ').trim()
+  }
+
+  /** Os dias com jornada da semente (seg a sex, sem feriado nacional) de `inicio` até a véspera de `antesDe`. */
+  function diasUteis(inicio: string, antesDe: string): string[] {
+    const dias: string[] = []
+    for (let dia = inicio; dia < antesDe; dia = somarDias(dia, 1)) {
+      const semana = new Date(`${dia}T12:00:00Z`).getUTCDay()
+      if (semana >= 1 && semana <= 5 && !feriadoNacional(dia)) dias.push(dia)
+    }
+    return dias
+  }
+
+  const TIPOS = ['entrada', 'saida_almoco', 'volta_almoco', 'saida']
+
+  /** As batidas da Ana num dia, nas horas dadas, com o tipo pela posição (como o banco). */
+  function batidasDoDia(modelo: Linha, dia: string, horas: string[]): Linha[] {
+    return horas.map((hora, indice) => ({
+      ...modelo,
+      id: `s-${dia}-${indice + 1}`,
+      registrado_em: `${dia}T${hora}:00.000-03:00`,
+      dia_civil: dia,
+      tipo: TIPOS[indice] ?? 'extra',
+      ordem_no_dia: indice + 1,
+      selfie_path: null,
+    }))
+  }
+
+  function atestadoPorHorario(modelo: Linha, id: string, dia: string, inicio: string, fim: string): Linha {
+    return {
+      ...modelo,
+      id,
+      dia_inicio: dia,
+      dia_fim: dia,
+      modalidade: 'horario',
+      hora_inicio: `${inicio}:00`,
+      hora_fim: `${fim}:00`,
+      atestado_path: null,
+    }
+  }
+
+  /** O banco com a data da ficha da Ana e a "Saldo calculado a partir de" trocadas. */
+  function comDatas(banco: Record<string, Linha[]>, fichaDaAna: string | null, saldoAPartirDe: string) {
+    return {
+      ...banco,
+      ponto_funcionarios: banco.ponto_funcionarios.map((ficha) =>
+        ficha.usuario_id === ANA.id ? { ...ficha, bate_ponto_desde: fichaDaAna } : ficha,
+      ),
+      ponto_configuracao: banco.ponto_configuracao.map((linha) => ({ ...linha, saldo_a_partir_de: saldoAPartirDe })),
+    }
+  }
+
+  /** As linhas da lista que dizem "Falta" (o item exato da linha do saldo, não "Falta justificada"). */
+  function linhasDeFalta(raiz: HTMLElement): HTMLLIElement[] {
+    return [...raiz.querySelectorAll('li')].filter((li) =>
+      [...li.querySelectorAll('span')].some((span) => span.textContent === 'Falta'),
+    )
+  }
+
+  /** O número de faltas do resumo ("16 faltas", "1 falta"; sem a frase, zero). */
+  function faltasDoResumo(raiz: HTMLElement, rotulo: string): number {
+    const resumo = resumoDoSaldo(raiz, rotulo) ?? ''
+    // Sem `\b`: o textContent cola a frase seguinte ("16 faltasHoje entra…").
+    return Number(/· (\d+) faltas?/.exec(resumo)?.[1] ?? 0)
+  }
+
+  /** Volta o espelho um mês ("Ver <mês anterior>"). */
+  async function verMesAnterior(raiz: HTMLElement) {
+    const anterior = [...raiz.querySelectorAll('button')].find(
+      (botao) => botao.getAttribute('aria-label') === `Ver ${rotuloDoMes(mesAnterior(mes))}`,
+    )
+    expect(anterior).toBeDefined()
+    await act(async () => {
+      anterior?.click()
+    })
+    await assentar()
+  }
+
+  /*
+   * O MÊS CORRENTE DA ANA: num dia útil, dois atestados por horário
+   * (08:00-10:00 e 15:00-17:00) e trabalho entre eles (quatro batidas); no
+   * seguinte, três batidas (esqueceu a saída); e hoje, só a entrada. A
+   * cobrança começa no dia 1 deste mês (a configuração da fumaça).
+   */
+  function bancoDoMes(): { banco: Record<string, Linha[]>; alvo: string | null; incompleto: string | null } {
+    const banco = bancoComDados()
+    const [alvo = null, incompleto = null] = diasUteis(`${mes}-02`, hoje)
+    const modelo = banco.ponto_registros[0]
+    const ausencia = banco.ponto_ausencias[0]
+    return {
+      alvo,
+      incompleto,
+      banco: {
+        ...banco,
+        ponto_registros: [
+          ...(alvo ? batidasDoDia(modelo, alvo, ['10:00', '12:00', '13:00', '15:00']) : []),
+          ...(incompleto ? batidasDoDia(modelo, incompleto, ['08:00', '12:00', '13:00']) : []),
+          ...batidasDoDia(modelo, hoje, ['08:00']),
+        ],
+        ponto_ausencias: [
+          ...banco.ponto_ausencias,
+          ...(alvo
+            ? [atestadoPorHorario(ausencia, 's-tarde', alvo, '15:00', '17:00'), atestadoPorHorario(ausencia, 's-manha', alvo, '08:00', '10:00')]
+            : []),
+        ],
+        ponto_pedidos_atraso: [],
+      },
+    }
+  }
+
+  it('o espelho da Ana e o painel dela mostram o mesmo saldo do mês, as marcas, as batidas, o pendente e hoje em andamento', async () => {
+    const { banco, alvo, incompleto } = bancoDoMes()
+
+    entrarComo('colaborador', banco)
+    const espelho = await abrir('/espelho')
+    conferirFumaca(espelho)
+    const doEspelho = resumoDoSaldo(espelho.raiz, 'Saldo do mês')
+    const textoDoEspelho = espelho.texto()
+
+    entrarComo('admin', banco)
+    const painel = await abrir(`/painel/${ANA.id}`)
+    conferirFumaca(painel)
+    const doPainel = resumoDoSaldo(painel.raiz, 'Saldo do período')
+    const textoDoPainel = painel.texto()
+
+    expect(doEspelho).toMatch(/^(0h00|[+−]\d+h\d{2})\s*Previsto/)
+    expect(doPainel).toBe(doEspelho)
+
+    for (const tela of [textoDoEspelho, textoDoPainel]) {
+      expect(tela).toContain('Saldo: em andamento')
+      // A cobrança começa no dia 1: nada de "Saldo calculado a partir de" neste mês.
+      expect(tela).not.toContain('Saldo calculado a partir de')
+      if (alvo) {
+        expect(tela).toContain('Atestado 08:00-10:00 · abonou 2h00')
+        expect(tela).toContain('Atestado 15:00-17:00 · abonou 2h00')
+      }
+      if (incompleto) {
+        expect(tela).toContain('Incompleto: saldo pendente')
+        expect(tela).toContain('O saldo não inclui 1 dia incompleto')
+      }
+    }
+    // As batidas do dia dos atestados continuam todas lá: quatro no espelho, quatro botões de corrigir no painel.
+    if (alvo) {
+      const doDia = painel.raiz.querySelector(`#dia-${alvo}`)
+      expect(doDia?.textContent).toContain('4 batidas')
+      expect(doDia?.textContent).toContain('4h00 trabalhadas + 4h00 de atestado')
+      const corrigir = [...(doDia?.querySelectorAll('button') ?? [])].filter((botao) =>
+        (botao.getAttribute('aria-label') ?? '').startsWith('Corrigir a batida das'),
+      )
+      expect(corrigir).toHaveLength(4)
+    }
+  })
+
+  /*
+   * HORAS EXTRAS E HORAS NEGATIVAS, NUM MÊS QUE JÁ ACABOU: o mês anterior ao
+   * de hoje, cobrado desde o dia 1. O primeiro dia útil tem 9 h (+1h00), o
+   * segundo, 8 h, e os outros dias úteis ficam sem batida (faltas). Não
+   * depende do dia em que a fumaça roda.
+   */
+  it('o espelho e o painel da pessoa dizem "Horas extras" e "Horas negativas" no mesmo resumo', async () => {
+    const anterior = mesAnterior(mes)
+    const uteis = diasUteis(`${anterior}-01`, `${mes}-01`)
+    const banco = bancoComDados()
+    const modelo = banco.ponto_registros[0]
+    const doMes = comDatas(
+      {
+        ...banco,
+        ponto_registros: [
+          ...batidasDoDia(modelo, uteis[0], ['08:00', '12:00', '13:00', '18:00']),
+          ...batidasDoDia(modelo, uteis[1], ['08:00', '12:00', '13:00', '17:00']),
+        ],
+        ponto_ausencias: [],
+        ponto_pedidos_atraso: [],
+      },
+      `${anterior}-01`,
+      `${anterior}-01`,
+    )
+    const faltas = uteis.length - 2
+
+    entrarComo('colaborador', doMes)
+    const espelho = await abrir('/espelho')
+    await verMesAnterior(espelho.raiz)
+    conferirFumaca(espelho)
+    const doEspelho = resumoDoSaldo(espelho.raiz, 'Saldo do mês') ?? ''
+    expect(doEspelho).toContain('Horas extras +1h00')
+    expect(doEspelho).toContain(`Horas negativas −${faltas * 8}h00`)
+    expect(doEspelho).toContain(`${faltas} faltas`)
+    expect(doEspelho).not.toContain('Hoje entra no saldo')
+    expect(linhasDeFalta(espelho.raiz)).toHaveLength(faltas)
+
+    entrarComo('admin', doMes)
+    const painel = await abrir(`/painel/${ANA.id}?de=${anterior}-01&ate=${ultimoDiaDoMes(anterior)}`)
+    conferirFumaca(painel)
+    expect(resumoDoSaldo(painel.raiz, 'Saldo do período')).toBe(doEspelho)
+    expect(linhasDeFalta(painel.raiz)).toHaveLength(faltas)
+  })
+
+  /*
+   * DESDE QUANDO O SALDO CONTA: a "Saldo calculado a partir de" no dia 15 do
+   * mês anterior, e a ficha antiga. O mês anterior começa antes dela (o resumo
+   * diz a data, e os dias de antes não são falta); o mês de antes dele acaba
+   * antes dela (nenhum dia conta, e a tela diz isso no lugar do resumo).
+   */
+  it('o mês que começa antes do primeiro dia cobrado diz "Saldo calculado a partir de", e o de antes não conta nada', async () => {
+    const anterior = mesAnterior(mes)
+    const desde = `${anterior}-15`
+    const banco = comDatas(
+      { ...bancoComDados(), ponto_registros: [], ponto_ausencias: [], ponto_pedidos_atraso: [] },
+      '2026-01-05',
+      desde,
+    )
+    const aPartirDe = `Saldo calculado a partir de ${dataBrasileira(desde)}. Os dias antes dessa data ficam fora do saldo.`
+    const faltasEsperadas = diasUteis(desde, `${mes}-01`)
+
+    entrarComo('admin', banco)
+    const painel = await abrir(`/painel/${ANA.id}?de=${anterior}-01&ate=${ultimoDiaDoMes(anterior)}`)
+    conferirFumaca(painel)
+    expect(resumoDoSaldo(painel.raiz, 'Saldo do período')).toContain(aPartirDe)
+    expect(linhasDeFalta(painel.raiz).map((li) => li.id)).toEqual(faltasEsperadas.map((dia) => `dia-${dia}`))
+    expect(faltasDoResumo(painel.raiz, 'Saldo do período')).toBe(faltasEsperadas.length)
+
+    const antes = mesAnterior(anterior)
+    const doMesDeAntes = await abrir(`/painel/${ANA.id}?de=${antes}-01&ate=${ultimoDiaDoMes(antes)}`)
+    conferirFumaca(doMesDeAntes)
+    expect(resumoDoSaldo(doMesDeAntes.raiz, 'Saldo do período')).toBeNull()
+    expect(doMesDeAntes.texto()).toContain(
+      `Saldo calculado a partir de ${dataBrasileira(desde)}: nenhum dia deste período entra no saldo.`,
+    )
+    expect(linhasDeFalta(doMesDeAntes.raiz)).toHaveLength(0)
+
+    entrarComo('colaborador', banco)
+    const espelho = await abrir('/espelho')
+    // No mês corrente a cobrança já vinha do mês anterior: nada a avisar.
+    expect(espelho.texto()).not.toContain('Saldo calculado a partir de')
+    await verMesAnterior(espelho.raiz)
+    conferirFumaca(espelho)
+    expect(resumoDoSaldo(espelho.raiz, 'Saldo do mês')).toContain(aPartirDe)
+    expect(linhasDeFalta(espelho.raiz)).toHaveLength(faltasEsperadas.length)
+  })
+
+  /*
+   * A FALTA NO ESPELHO: o dia útil passado sem batida aparece na lista com
+   * "Falta" e o débito, e a lista tem tantos dias de falta quantos o resumo
+   * cobra.
+   */
+  it('no espelho, cada dia útil passado sem batida aparece com "Falta" e o débito, tantos quantas as faltas do resumo', async () => {
+    const banco = bancoComDados()
+    // A cobrança começa no dia 1 deste mês, e nada foi batido nele: só o atestado do dia 1 (dia inteiro).
+    entrarComo('colaborador', { ...banco, ponto_registros: [], ponto_pedidos_atraso: [] })
+    const tela = await abrir('/espelho')
+    conferirFumaca(tela)
+
+    const faltas = linhasDeFalta(tela.raiz)
+    const esperados = diasUteis(`${mes}-02`, hoje)
+    // Os dias úteis antes de hoje, do dia 2 em diante, e só eles, em ordem.
+    expect(faltas.map((li) => li.id)).toEqual(esperados.map((dia) => `dia-${dia}`))
+    expect(faltas).toHaveLength(faltasDoResumo(tela.raiz, 'Saldo do mês'))
+    for (const li of faltas) {
+      const texto = (li.textContent ?? '').replace(/\s+/g, ' ')
+      expect(texto).toContain('Sem batida')
+      expect(texto).toContain('Previsto 8h00')
+      expect(texto).toContain('Saldo −8h00')
+      // O espelho é da própria pessoa: nada de "Inserir batida" ou "Lançar falta".
+      expect(li.querySelector('button')).toBeNull()
+    }
+    if (esperados.length > 0) {
+      expect(tela.texto()).toMatch(/Horas negativas −\d+h\d{2}/)
+      expect(tela.texto()).not.toContain('Nenhuma batida')
+    }
+
+    // O atestado do dia inteiro não é falta: o dia 1 aparece pela ausência, sem "Falta", e soma 8h00 se tinha jornada.
+    const diaDoAtestado = tela.raiz.querySelector<HTMLElement>(`#dia-${mes}-01`)
+    expect(diaDoAtestado).not.toBeNull()
+    expect(faltas).not.toContain(diaDoAtestado)
+    // Hoje sem batida não é falta, e não entra na lista (o dia 1 tem o atestado e entra por ele).
+    if (hoje !== `${mes}-01`) expect(tela.raiz.querySelector(`#dia-${hoje}`)).toBeNull()
+    // Nem o fim de semana sem jornada nem o futuro.
+    for (let dia = `${mes}-02`; dia.startsWith(mes); dia = somarDias(dia, 1)) {
+      const semana = new Date(`${dia}T12:00:00Z`).getUTCDay()
+      if (semana === 0 || semana === 6 || dia >= hoje) expect(tela.raiz.querySelector(`#dia-${dia}`)).toBeNull()
+    }
+  })
+
+  it('no espelho com batidas, os dias de falta continuam sendo as faltas do resumo, e o dia com batida nunca é falta', async () => {
+    const { banco, alvo, incompleto } = bancoDoMes()
+    entrarComo('colaborador', banco)
+    const tela = await abrir('/espelho')
+    conferirFumaca(tela)
+    const faltas = linhasDeFalta(tela.raiz)
+    expect(faltas).toHaveLength(faltasDoResumo(tela.raiz, 'Saldo do mês'))
+    const dias = faltas.map((li) => li.id.replace('dia-', ''))
+    for (const dia of [alvo, incompleto, hoje, `${mes}-01`]) if (dia) expect(dias).not.toContain(dia)
+    // Em ordem de data, junto dos outros dias da lista.
+    expect([...dias].sort()).toEqual(dias)
+  })
+
+  it('o mês antes do primeiro dia cobrado, sem batida nem ausência, continua com "Nenhuma batida", sem falta, e diz desde quando o saldo conta', async () => {
+    const banco = bancoComDados()
+    // O simulado não recorta por mês: sem batida, ausência nem pedido em lugar nenhum.
+    entrarComo('colaborador', { ...banco, ponto_registros: [], ponto_ausencias: [], ponto_pedidos_atraso: [] })
+    const tela = await abrir('/espelho')
+    await verMesAnterior(tela.raiz)
+    conferirFumaca(tela)
+    expect(tela.texto()).toContain('Nenhuma batida em')
+    expect(linhasDeFalta(tela.raiz)).toHaveLength(0)
+    expect(resumoDoSaldo(tela.raiz, 'Saldo do mês')).toBeNull()
+    expect(tela.texto()).toContain(
+      `Saldo calculado a partir de ${dataBrasileira(`${mes}-01`)}: nenhum dia deste mês entra no saldo.`,
+    )
+  })
+
+  it('sem saldo, a tela diz por quê: a ficha sem a data, a conta sem ficha e a empresa sem a configuração', async () => {
+    const { banco } = bancoDoMes()
+    const semData = comDatas(banco, null, `${mes}-01`)
+
+    entrarComo('colaborador', semData)
+    const espelho = await abrir('/espelho')
+    conferirFumaca(espelho)
+    expect(resumoDoSaldo(espelho.raiz, 'Saldo do mês')).toBeNull()
+    expect(espelho.texto()).toContain(
+      'O saldo aparece quando quem administra o ponto preencher, na sua ficha, a data em que você passou a bater ponto aqui.',
+    )
+    expect(linhasDeFalta(espelho.raiz)).toHaveLength(0)
+
+    entrarComo('admin', semData)
+    const painel = await abrir(`/painel/${ANA.id}`)
+    conferirFumaca(painel)
+    expect(resumoDoSaldo(painel.raiz, 'Saldo do período')).toBeNull()
+    expect(painel.texto()).toContain(
+      'Sem “Passou a bater ponto aqui em” na ficha desta pessoa, nenhum dia é cobrado e o saldo não aparece.',
+    )
+
+    // O Sérgio bate ponto sem ficha (só para teste): o espelho dele não tem de onde tirar a data.
+    entrarComo('admin', banco)
+    const doSergio = await abrir('/espelho')
+    conferirFumaca(doSergio)
+    expect(doSergio.texto()).toContain(
+      'O saldo aparece quando a sua conta tiver uma ficha, com a data em que você passou a bater ponto aqui.',
+    )
+
+    entrarComo('colaborador', { ...banco, ponto_configuracao: [] })
+    const semConfiguracao = await abrir('/espelho')
+    conferirFumaca(semConfiguracao)
+    expect(semConfiguracao.texto()).toContain('O saldo aparece quando a jornada da empresa estiver cadastrada.')
+    expect(resumoDoSaldo(semConfiguracao.raiz, 'Saldo do mês')).toBeNull()
+  })
+})
+
+/* ------------------------------------------------------------------ */
+
+describe('o atestado soma nas horas do dia e do período, e o feriado aparece', () => {
+  /*
+   * SETEMBRO DE 2026 (mês fechado, com a jornada da semente: 08:00-12:00 e
+   * 13:00-17:00): terça 08/09, 08:00-12:00 e 13:00-15:01 (6h01), com
+   * atestado das 15:00 às 16:00. O abono é a parte da jornada coberta e não
+   * trabalhada, 15:01-16:00: o dia soma 6h01 + 0h59 = 7h00. A segunda 07/09
+   * é a Independência: "feriado", sem falta.
+   */
+  const TERCA = '2026-09-08'
+  const SETEMBRO = 'de=2026-09-01&ate=2026-09-30'
+
+  function bancoDeSetembro(batePontoDesde: string | null): Record<string, Linha[]> {
+    const banco = bancoComDados()
+    const tipos = ['entrada', 'saida_almoco', 'volta_almoco', 'saida']
+    return {
+      ...banco,
+      ponto_registros: ['08:00', '12:00', '13:00', '15:01'].map((hora, indice) => ({
+        ...banco.ponto_registros[0],
+        id: `setembro-${indice + 1}`,
+        registrado_em: `${TERCA}T${hora}:00.000-03:00`,
+        dia_civil: TERCA,
+        tipo: tipos[indice],
+        ordem_no_dia: indice + 1,
+        selfie_path: null,
+      })),
+      ponto_ausencias: [
+        {
+          ...banco.ponto_ausencias[0],
+          id: 'setembro-atestado',
+          dia_inicio: TERCA,
+          dia_fim: TERCA,
+          modalidade: 'horario',
+          hora_inicio: '15:00:00',
+          hora_fim: '16:00:00',
+          atestado_path: null,
+        },
+      ],
+      ponto_pedidos_atraso: [],
+      ponto_funcionarios: banco.ponto_funcionarios.map((ficha) =>
+        ficha.usuario_id === ANA.id ? { ...ficha, bate_ponto_desde: batePontoDesde } : ficha,
+      ),
+      ponto_configuracao: banco.ponto_configuracao.map((linha) => ({ ...linha, saldo_a_partir_de: '2026-09-01' })),
+    }
+  }
+
+  const textoDe = (elemento: Element | null) => (elemento?.textContent ?? '').replace(/\s+/g, ' ')
+
+  /** O cartão do total do período: o rótulo e o que vem depois dele. */
+  function cartaoDoTotal(raiz: HTMLElement): string {
+    const rotulo = [...raiz.querySelectorAll('p')].find((p) => p.textContent === 'Total do período')
+    return textoDe(rotulo?.parentElement ?? null)
+  }
+
+  for (const batePontoDesde of ['2026-09-01', null]) {
+    it(`o dia soma 7h00 no cartão e no total do período (${batePontoDesde ? 'com' : 'sem'} a data na ficha)`, async () => {
+      entrarComo('admin', bancoDeSetembro(batePontoDesde))
+      const tela = await abrir(`/painel/${ANA.id}?${SETEMBRO}`)
+      conferirFumaca(tela)
+
+      const dia = textoDe(tela.raiz.querySelector(`#dia-${TERCA}`))
+      expect(dia).toContain('7h00')
+      expect(dia).toContain('6h01 trabalhadas + 0h59 de atestado')
+      expect(dia).toContain('Atestado 15:00-16:00 · abonou 0h59')
+      expect(dia).toContain('4 batidas')
+
+      const total = cartaoDoTotal(tela.raiz)
+      expect(total).toContain('7h00')
+      expect(total).toContain('6h01 trabalhadas + 0h59 de atestado')
+      if (batePontoDesde) expect(total).toContain('Saldo do período')
+      else expect(total).not.toContain('Saldo do período')
+    })
+  }
+
+  it('no painel de todos, o cartão da pessoa soma o atestado e diz quanto foi', async () => {
+    entrarComo('admin', bancoDeSetembro(null))
+    const tela = await abrir(`/painel?${SETEMBRO}`)
+    conferirFumaca(tela)
+    const cartao = [...tela.raiz.querySelectorAll('a')].find((link) => link.getAttribute('href')?.startsWith(`/painel/${ANA.id}`))
+    expect(textoDe(cartao ?? null)).toContain('7h00')
+    expect(textoDe(cartao ?? null)).toContain('+ 0h59 de atestado')
+    expect(cartaoDoTotal(tela.raiz)).toContain('6h01 trabalhadas + 0h59 de atestado')
+  })
+
+  it('a segunda 07/09 aparece como feriado, como o fim de semana, e sem falta: o feriado é dia sem jornada no saldo', async () => {
+    entrarComo('admin', bancoDeSetembro('2026-09-01'))
+    const tela = await abrir(`/painel/${ANA.id}?${SETEMBRO}`)
+    conferirFumaca(tela)
+
+    const feriado = textoDe(tela.raiz.querySelector('#dia-2026-09-07'))
+    expect(feriado).toContain('feriado · Independência do Brasil')
+    expect(feriado).toContain('Sem batida')
+    expect(feriado).not.toContain('Falta')
+    expect(feriado).not.toContain('Previsto')
+    expect(feriado).not.toContain('fim de semana')
+    // O dia útil vazio ao lado continua sendo falta, e o sábado continua "fim de semana".
+    expect(textoDe(tela.raiz.querySelector('#dia-2026-09-09'))).toContain('Falta')
+    expect(textoDe(tela.raiz.querySelector('#dia-2026-09-05'))).toContain('fim de semana')
+    expect(textoDe(tela.raiz.querySelector('#dia-2026-09-05'))).not.toContain('feriado')
   })
 })
 

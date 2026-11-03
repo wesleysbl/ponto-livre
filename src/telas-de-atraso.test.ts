@@ -392,7 +392,7 @@ describe('o pedido, do lado do colaborador', () => {
     expect(texto(html)).toContain('Meu espelho de ponto')
     // O rodapé, inteiro: de onde saem as horas e o que fica fora do total.
     expect(trechos(/<footer\b[^>]*>(.*?)<\/footer>/s.exec(html)?.[1] ?? '')).toEqual([
-      'As horas saem das suas batidas, com o horário oficial do ponto. Dia com batida faltando não entra no total até ser corrigido.',
+      'As horas saem das suas batidas, com o horário oficial do ponto, mais as horas abonadas por atestado ou falta justificada. Dia com batida faltando não entra no total até ser corrigido, e o saldo dele fica pendente até lá. O saldo compara as horas com a sua jornada: atestado médico e falta justificada abonam a parte da jornada que cobrem. O dia da jornada que passou sem batida e sem abono aparece na lista como falta.',
     ])
   })
 })

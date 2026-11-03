@@ -46,14 +46,32 @@ import {
   listarDiasDoPeriodo,
   TETO_DE_DIAS_NA_LISTA,
 } from '../lib/corrigir'
-import { fichaDaSessao } from '../lib/cadastro'
+import { fichaDaSessao, mesmaConta } from '../lib/cadastro'
 import { lerAusenciasDoPeriodo } from '../lib/faltas'
+import { lerConfiguracao } from '../lib/administracao'
+import type { ConfiguracaoDoPonto } from '../lib/configuracao'
+import {
+  abonadoNoTotal,
+  calcularSaldoDoPeriodo,
+  cobrancaNoRecorte,
+  regrasDoSaldo,
+  type SaldoDoDia,
+} from '../lib/saldo'
+import { ComposicaoDoTotal, ResumoDoSaldoNaTela } from '../components/SaldoDoDia'
 import { lerAprovadoresDoPeriodo } from '../lib/pedidos'
 import { useAuth } from '../hooks/useAuth'
 import { baixarCsv } from '../lib/download'
 import type { PedidoDeAtraso } from '../lib/atraso'
 import { diaCivilDeHoje, formatarHora, type BatidaDoAdmin } from '../lib/formato'
-import { agruparPorDia, ehDiaValido, formatarDuracao, mesDe, resumirDias, rotuloDoMes } from '../lib/horas'
+import {
+  agruparPorDia,
+  dataBrasileira,
+  ehDiaValido,
+  formatarDuracao,
+  mesDe,
+  resumirDias,
+  rotuloDoMes,
+} from '../lib/horas'
 import { resetarPinDeUsuario } from '../lib/pin'
 import {
   ANCORA_DOS_PEDIDOS_DA_PESSOA,
@@ -90,12 +108,30 @@ import {
  * significa que ela pode SAIR do dia em que estava e entrar em outro — ou sair
  * do período. Costurar isso à mão seria reimplementar o gatilho no navegador.
  *
- * AS AUSÊNCIAS ENTRAM NA MESMA LISTA DE DIAS, SEM ENTRAR NA CONTA
- * O dia de falta justificada aparece — com batida ou sem —, e o total do
- * período continua sendo o de `resumirDias`, que só vê batidas. Lançar e
- * cancelar relêem a tela inteira, como o ajuste. A leitura das ausências é
- * parte da carga: se ela falhar, a tela mostra o erro em vez de um mês sem as
- * faltas — o CSV sairia daqui sem elas, e ninguém desconfiaria.
+ * AS AUSÊNCIAS ENTRAM NA MESMA LISTA DE DIAS
+ * O dia de falta justificada aparece, com batida ou sem. Lançar e cancelar
+ * relêem a tela inteira, como o ajuste. A leitura das ausências é parte da
+ * carga: se ela falhar, a tela mostra o erro em vez de um mês sem as faltas (o
+ * CSV sairia daqui sem elas, e ninguém desconfiaria).
+ *
+ * O SALDO É A CONTA DO ESPELHO DELA
+ * `calcularSaldoDoPeriodo` (`saldo.ts`) com as regras de `regrasDoSaldo` (a
+ * configuração e a ficha ligada a esta conta) e as mesmas batidas e ausências
+ * da tela: o período do dia 1 ao último é exatamente o `calcularSaldoDoMes` do
+ * espelho, então quem administra e a pessoa leem o mesmo saldo. Cada dia ganha
+ * a linha de previsto, abonado e saldo; o cartão do total ganha o saldo do
+ * período, com "Horas extras", "Horas negativas" e as faltas. A configuração é
+ * de melhor esforço: se a leitura falhar, a tela continua de pé e o cartão diz
+ * por que o saldo não aparece. Quando o período começa antes do primeiro dia
+ * cobrado, o resumo diz a partir de que dia o saldo conta
+ * (`cobrancaNoRecorte`).
+ *
+ * O TOTAL DO PERÍODO SOMA O ATESTADO: o número grande é o trabalhado de
+ * `resumirDias` mais o abonado dos dias que entram no total (`abonadoNoTotal`),
+ * com a conta embaixo ("152h00 trabalhadas + 8h30 de atestado"). O abono vem
+ * da mesma conta do saldo e aparece mesmo sem a data na ficha: ele não acusa
+ * ninguém, só soma a hora que quem administra lançou. Sem a configuração, o
+ * total é só o trabalhado.
  *
  * TODOS OS DIAS DO PERÍODO ATÉ HOJE
  * A lista mostra cada dia, do início do período até o fim dele ou até hoje
@@ -103,9 +139,10 @@ import {
  * batida neste dia" e "Lançar falta neste dia", e o dia só com ausência também
  * tem o seu "Inserir". Se só aparecessem os dias com batida ou ausência, o RH
  * não acharia como lançar o sábado esquecido de alguém. Período com mais de 62
- * dias volta a mostrar só os dias com conteúdo. O total do topo continua saindo
- * de `resumirDias(agruparPorDia(batidas))`, que não vê dia vazio nenhum — a
- * lista decide as linhas, não a conta. O mês corrente abre rolado em hoje.
+ * dias volta a mostrar só os dias com conteúdo. O trabalhado do topo sai de
+ * `resumirDias(agruparPorDia(batidas))`, que não vê dia vazio nenhum, e o
+ * abonado e o saldo saem de `saldo.ts`, que vê todo dia do período: a lista
+ * decide as linhas, não a conta. O mês corrente abre rolado em hoje.
  *
  * DEPOIS DE GRAVAR, A TELA NÃO PERDE O LUGAR
  * Um ajuste não zera a tela (a lista sumindo num "Carregando…", voltando do
@@ -149,6 +186,12 @@ interface Dados {
   ausencias: Ausencia[]
   /** Quem aprovou cada batida em atraso. De melhor esforço: vazio não é erro. */
   aprovadores: Map<string, string | null>
+  /**
+   * A configuração do ponto, pela jornada da empresa, a tolerância e a "Saldo
+   * calculado a partir de". De melhor esforço: `undefined` quando a leitura
+   * falhou, `null` quando a linha não existe.
+   */
+  configuracao: ConfiguracaoDoPonto | null | undefined
   erro: string | null
 }
 
@@ -158,20 +201,22 @@ const VAZIO: Dados = {
   correcoes: [],
   ausencias: [],
   aprovadores: new Map(),
+  configuracao: undefined,
   erro: null,
 }
 
 async function buscar(periodo: Periodo, usuarioId: string): Promise<Dados> {
   try {
-    const [gente, batidas, correcoes, ausencias] = await Promise.all([
+    const [gente, batidas, correcoes, ausencias, configuracao] = await Promise.all([
       lerGenteDoPainel(),
       lerBatidasDoPeriodo(periodo, usuarioId),
       lerCorrecoesDoUsuario(usuarioId),
       lerAusenciasDoPeriodo(periodo, usuarioId),
+      lerConfiguracao().catch(() => undefined),
     ])
     const nomes = new Map(gente.funcionarios.map((pessoa) => [pessoa.usuarioId, pessoa.nome]))
     const aprovadores = await lerAprovadoresDoPeriodo(periodo, nomes, usuarioId)
-    return { gente, batidas, correcoes, ausencias, aprovadores, erro: null }
+    return { gente, batidas, correcoes, ausencias, aprovadores, configuracao, erro: null }
   } catch (falha) {
     return {
       ...VAZIO,
@@ -268,6 +313,45 @@ export function PainelDaPessoa() {
     [dias, ausenciasDoDia, periodo.inicio, periodo.fim, hoje],
   )
   const diasDaLista = lista.dias
+
+  /*
+   * O SALDO DO PERÍODO, da mesma conta do espelho (ver o cabeçalho). As regras
+   * saem de `regrasDoSaldo`, com a ficha ligada a esta conta; sem ficha, ou
+   * sem a data nela, nenhum dia é cobrado, e o cartão diz isso em vez de
+   * mostrar um saldo zerado.
+   */
+  const fichaDaPessoa = useMemo(
+    () => dados.gente.fichas.find((ficha) => mesmaConta(ficha.usuarioId, usuarioId)) ?? null,
+    [dados.gente.fichas, usuarioId],
+  )
+  const regras = useMemo(
+    () => (dados.configuracao ? regrasDoSaldo(dados.configuracao, fichaDaPessoa, hoje) : null),
+    [dados.configuracao, fichaDaPessoa, hoje],
+  )
+  const saldoDoPeriodo = useMemo(() => {
+    if (carregando || dados.erro || !regras) return null
+    return calcularSaldoDoPeriodo(periodo.inicio, periodo.fim, dados.batidas, dados.ausencias, regras)
+  }, [carregando, dados.erro, regras, dados.batidas, dados.ausencias, periodo.inicio, periodo.fim])
+  const saldoPorDia = useMemo(
+    () => new Map<string, SaldoDoDia>((saldoDoPeriodo?.dias ?? []).map((dia) => [dia.dia, dia])),
+    [saldoDoPeriodo],
+  )
+  /** O abonado que entra no total do período (ver o cabeçalho). Zero sem a configuração. */
+  const abonadoDoPeriodo = useMemo(() => abonadoNoTotal(saldoDoPeriodo?.dias ?? []), [saldoDoPeriodo])
+  /** Onde o primeiro dia cobrado cai no período: a data que o resumo diz, ou o motivo de não haver saldo. */
+  const cobranca = regras ? cobrancaNoRecorte(regras.cobrancaDesde, periodo.inicio, periodo.fim) : null
+  const semSaldo =
+    dados.configuracao === undefined
+      ? 'O saldo não aparece porque a jornada da empresa não carregou.'
+      : dados.configuracao === null
+        ? 'O saldo aparece quando a jornada da empresa estiver cadastrada.'
+        : !fichaDaPessoa
+          ? 'Sem ficha ligada a esta conta, nenhum dia é cobrado e o saldo não aparece.'
+          : cobranca?.caso === 'sem_data'
+            ? 'Sem “Passou a bater ponto aqui em” na ficha desta pessoa, nenhum dia é cobrado e o saldo não aparece.'
+            : cobranca?.caso === 'depois'
+              ? `Saldo calculado a partir de ${dataBrasileira(cobranca.desde)}: nenhum dia deste período entra no saldo.`
+              : null
   /** Nenhuma batida e nenhuma ausência no período: o aviso de "nenhuma batida" aparece acima da lista. */
   const periodoSemNada = dias.length === 0 && ausenciasDoDia.size === 0
 
@@ -570,8 +654,15 @@ export function PainelDaPessoa() {
             Total do período
           </p>
           <p className="mt-2 font-mono text-4xl font-medium tracking-tight text-plat tabular-nums">
-            {carregando || dados.erro ? '—' : formatarDuracao(resumo.minutos)}
+            {carregando || dados.erro ? '—' : formatarDuracao(resumo.minutos + abonadoDoPeriodo)}
           </p>
+          {!carregando && !dados.erro && (
+            <ComposicaoDoTotal
+              trabalhado={resumo.minutos}
+              abonado={abonadoDoPeriodo}
+              dias={saldoDoPeriodo?.dias ?? []}
+            />
+          )}
           {atualizando && (
             <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-mute">
               <RefreshCw size={12} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
@@ -593,7 +684,7 @@ export function PainelDaPessoa() {
                 <>
                   {' · '}
                   {ausenciasDoDia.size}{' '}
-                  {ausenciasDoDia.size === 1 ? 'dia de ausência' : 'dias de ausência'}, sem horas
+                  {ausenciasDoDia.size === 1 ? 'dia de ausência' : 'dias de ausência'}
                 </>
               )}
               {semLocalizacao && (
@@ -603,6 +694,18 @@ export function PainelDaPessoa() {
                 </>
               )}
             </p>
+          )}
+
+          {saldoDoPeriodo && !semSaldo && (
+            <ResumoDoSaldoNaTela
+              resumo={saldoDoPeriodo.resumo}
+              rotulo="Saldo do período"
+              comHoje={hoje >= periodo.inicio && hoje <= periodo.fim}
+              aPartirDe={cobranca?.caso === 'no_meio' ? cobranca.desde : null}
+            />
+          )}
+          {!carregando && !dados.erro && semSaldo && (
+            <p className="mt-4 border-t border-hair pt-4 text-xs leading-relaxed text-mute">{semSaldo}</p>
           )}
 
           {/* As duas confirmações do reset ficam DENTRO do cartão do total, que
@@ -776,6 +879,7 @@ export function PainelDaPessoa() {
                     aoAbrirAtestado={setAtestadoAberto}
                     aoCorrigir={(batida) => setAjuste({ nome: 'corrigir', batida })}
                     aoInserirNesteDia={inserirNesteDia}
+                    saldo={saldoPorDia.get(diaCivil)}
                   />
                 )
               }
@@ -788,6 +892,7 @@ export function PainelDaPessoa() {
                     feriado={feriado}
                     ausencias={ausencias}
                     aoAbrirAtestado={setAtestadoAberto}
+                    saldo={saldoPorDia.get(diaCivil)}
                   >
                     {pedidosPorDia.has(diaCivil) && (
                       <PedidosEsperandoNoDia
@@ -815,6 +920,7 @@ export function PainelDaPessoa() {
                   aoLancarFaltaNesteDia={propria ? undefined : setLancandoEm}
                   pedidos={pedidosPorDia.get(diaCivil)}
                   aoVerPedido={verPedido}
+                  saldo={saldoPorDia.get(diaCivil)}
                 />
               )
             })}

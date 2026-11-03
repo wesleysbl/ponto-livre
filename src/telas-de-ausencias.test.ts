@@ -116,6 +116,15 @@ function texto(html: string): string {
     .replace(/\s+/g, ' ')
 }
 
+/**
+ * O texto como o navegador o mostra (`textContent`): as tags somem sem deixar
+ * espaço. É o que conta na marca da ausência, que guarda o intervalo de
+ * horário num `<span>` próprio para ele não se partir na linha.
+ */
+function corrido(html: string): string {
+  return texto(html.replace(/<[^>]+>/g, ''))
+}
+
 const nada = () => {}
 
 function ausencia(id: string, extras: Partial<Ausencia> = {}): Ausencia {
@@ -453,11 +462,12 @@ describe('o dia de ausência nas listas de dias', () => {
   })
 
   it('a marca da ausência por horário diz o tipo e o intervalo, com hífen', () => {
-    const html = texto(
-      desenhar(createElement(DiaDeAusencia, { dia: '2026-10-21', ausencias: [POR_HORARIO], aoAbrirAtestado: nada })),
-    )
+    const cru = desenhar(createElement(DiaDeAusencia, { dia: '2026-10-21', ausencias: [POR_HORARIO], aoAbrirAtestado: nada }))
+    const html = texto(cru)
     expect(html).toContain('Atestado 14:00-16:00')
     expect(html).not.toMatch(/[\u2013\u2014]/)
+    // O intervalo inteiro numa linha: a 320 px, "14:00-" não fica numa linha e "16:00" na outra.
+    expect(cru).toContain('<span class="whitespace-nowrap">14:00-16:00</span>')
   })
 
   it('duas ausências por horário no mesmo dia viram duas marcas, em ordem de início', () => {
@@ -473,7 +483,7 @@ describe('o dia de ausência nas listas de dias', () => {
       // Lançada depois da da tarde: a ordem da marca é a do relógio, e não a do lançamento.
       lancado_em: '2026-10-21T18:00:00.000Z',
     })
-    const html = texto(
+    const html = corrido(
       desenhar(createElement(MarcaDeAusencia, { ausencias: [POR_HORARIO, manha], aoAbrirAtestado: nada })),
     )
     expect(html.indexOf('Outro motivo 09:00-10:00: cartório')).toBeGreaterThanOrEqual(0)
@@ -481,9 +491,9 @@ describe('o dia de ausência nas listas de dias', () => {
   })
 
   /*
-   * O ABONO NA MARCA VEM DO SALDO DO DIA, que as telas ainda não montam: a marca
-   * recebe as coberturas prontas (`SaldoDoDia.coberturas`) e só as escreve. Aqui
-   * elas saem da mesma conta que as telas vão usar.
+   * O ABONO NA MARCA VEM DO SALDO DO DIA: a marca recebe as coberturas prontas
+   * (`SaldoDoDia.coberturas`) e só as escreve. Aqui elas saem da mesma conta
+   * que as telas usam; as telas inteiras estão em `telas-do-saldo.test.ts`.
    */
   it('com as coberturas do saldo do dia, a marca diz quanto abonou, ou que "outro motivo" não abona', () => {
     const outro = ausencia('a-outro', {
@@ -505,7 +515,7 @@ describe('o dia de ausência nas listas de dias', () => {
     }
     // Quarta, 21/10: a jornada semente vai das 08:00 às 12:00 e das 13:00 às 17:00.
     const saldo = calcularSaldoDoDia('2026-10-21', [], [POR_HORARIO, outro], regras)
-    const html = texto(
+    const html = corrido(
       desenhar(
         createElement(MarcaDeAusencia, {
           ausencias: [POR_HORARIO, outro],
@@ -517,7 +527,7 @@ describe('o dia de ausência nas listas de dias', () => {
     expect(html).toContain('Atestado 14:00-16:00 · abonou 2h00')
     expect(html).toContain('Outro motivo 09:00-10:00: cartório · não abona')
 
-    // Sem as coberturas (as telas de hoje), a marca não fala de abono.
+    // Sem as coberturas (as regras do saldo não carregaram), a marca não fala de abono.
     const semSaldo = texto(desenhar(createElement(MarcaDeAusencia, { ausencias: [POR_HORARIO], aoAbrirAtestado: nada })))
     expect(semSaldo).toContain('Atestado 14:00-16:00')
     expect(semSaldo).not.toMatch(/abonou|não abona/)

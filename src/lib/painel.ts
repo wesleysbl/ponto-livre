@@ -127,8 +127,15 @@ const POR_NOME = new Intl.Collator('pt-BR', { sensitivity: 'base' })
 /* As fichas no painel                                                 */
 /* ------------------------------------------------------------------ */
 
-/** O que o painel precisa saber de uma ficha para decidir quem é do ponto num período. */
-export type FichaNoPainel = Pick<FichaDoFuncionario, 'usuarioId' | 'ativo' | 'desligamento'>
+/**
+ * O que o painel precisa saber de uma ficha para decidir quem é do ponto num
+ * período, e o que o saldo de cada pessoa lê da ficha (`regrasDoSaldo`, em
+ * `saldo.ts`): a data em que ela passou a bater ponto aqui e a jornada própria.
+ */
+export type FichaNoPainel = Pick<
+  FichaDoFuncionario,
+  'usuarioId' | 'ativo' | 'desligamento' | 'batePontoDesde' | 'jornada'
+>
 
 /**
  * A gente do painel, da tela da pessoa e da folha: as contas do ponto com o
@@ -153,7 +160,10 @@ export interface GenteDoPainel {
    * super admin — o `bate_ponto` de `ponto_meu_acesso()`.
    */
   batemPonto: Set<string>
-  /** As fichas, para `contasComFichaNoPeriodo` (o painel só mostra quem é do ponto). */
+  /**
+   * As fichas, para `contasComFichaNoPeriodo` (o painel só mostra quem é do
+   * ponto) e para o saldo de cada pessoa (a data e a jornada própria da ficha).
+   */
   fichas: FichaNoPainel[]
 }
 

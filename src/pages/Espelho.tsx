@@ -5,6 +5,8 @@ import { useAuth } from '../hooks/useAuth'
 import { DiaDoEspelho } from '../components/DiaDoEspelho'
 import { AusenciasDoPeriodo } from '../components/AusenciasDoPeriodo'
 import { DiaDeAusencia } from '../components/DiaDeAusencia'
+import { DiaSemBatida } from '../components/DiaDoPainel'
+import { ComposicaoDoTotal, ResumoDoSaldoNaTela } from '../components/SaldoDoDia'
 import { VisorDeAtestado } from '../components/VisorDeAtestado'
 import { MeusPedidosDeAtraso } from '../components/MeusPedidosDeAtraso'
 import { VisorDeSelfie } from '../components/VisorDeSelfie'
@@ -12,6 +14,7 @@ import { MarcaDoTopo } from '../components/Marca'
 import { Aviso, Botao, Painel } from '../components/ui'
 import { diaCivilDeHoje, lerBatidasDoMes, type Batida } from '../lib/batidas'
 import {
+  dataBrasileira,
   formatarDuracao,
   mesAnterior,
   mesDe,
@@ -33,6 +36,17 @@ import {
   type Ausencia,
 } from '../lib/ausencias'
 import { lerAusenciasDoPeriodo } from '../lib/faltas'
+import { lerConfiguracao, lerFichas } from '../lib/administracao'
+import type { ConfiguracaoDoPonto } from '../lib/configuracao'
+import { mesmaConta, type FichaDoFuncionario } from '../lib/cadastro'
+import {
+  abonadoNoTotal,
+  calcularSaldoDoMes,
+  cobrancaNoRecorte,
+  juntarDiasDeFalta,
+  regrasDoSaldo,
+  type SaldoDoDia,
+} from '../lib/saldo'
 
 /*
  * MEU ESPELHO DE PONTO — o mês inteiro, conferido pelo próprio funcionário.
@@ -57,12 +71,40 @@ import { lerAusenciasDoPeriodo } from '../lib/faltas'
  * A leitura dos pedidos é à parte: se ela falhar, o mês continua de pé e só a
  * lista de pedidos mostra o erro.
  *
- * AS AUSÊNCIAS MARCAM O DIA E NÃO MEXEM NO TOTAL
- * A falta justificada que o admin lançou aparece no dia dela — com batida ou
- * sem —, e numa lista embaixo, com o atestado. O total do mês continua sendo o
- * de `montarEspelho`, que não sabe que ausência existe. A leitura é à parte,
- * como a dos pedidos: se ela falhar, o mês continua de pé e o aviso diz que as
- * ausências não vieram. A cancelada não aparece aqui — ela não vale mais.
+ * AS AUSÊNCIAS MARCAM O DIA, E O QUE ELAS ABONAM SOMA NO TOTAL
+ * A falta justificada que o admin lançou aparece no dia dela (com batida ou
+ * sem) e numa lista embaixo, com o atestado. O total do mês é o trabalhado de
+ * `montarEspelho` mais o abonado dos dias que entram no total
+ * (`abonadoNoTotal`, de `saldo.ts`), com a conta escrita embaixo: a mesma do
+ * painel da pessoa, para quem bate e quem administra lerem o mesmo total. A
+ * leitura das ausências é à parte, como a dos pedidos: se ela falhar, o mês
+ * continua de pé e o aviso diz que as ausências não vieram. A cancelada não
+ * aparece aqui: ela não vale mais.
+ *
+ * O SALDO É OUTRA CONTA, POR CIMA DO TOTAL
+ * `calcularSaldoDoMes` (`saldo.ts`, a mesma do painel da pessoa) compara o
+ * trabalhado com a jornada e abona o período do atestado. Cada dia ganha a
+ * linha de previsto, abonado e saldo, e o cartão do total ganha o saldo do
+ * mês. As regras saem de `regrasDoSaldo`, e só dela: a configuração (a jornada
+ * da empresa, a tolerância e a "Saldo calculado a partir de") e a ficha da
+ * pessoa (a data em que ela passou a bater ponto aqui e a jornada própria),
+ * lidas à parte, uma vez: o banco deixa todo mundo com sessão ler a
+ * configuração e cada um ler a própria ficha. O saldo só aparece com as três
+ * leituras certas (regras, batidas e ausências): sem as ausências, o dia do
+ * atestado sairia como débito, e isso é pior do que não mostrar. Sem saldo, o
+ * cartão diz por quê; quando o mês começa antes do primeiro dia cobrado, o
+ * resumo diz a partir de que dia o saldo conta (`cobrancaNoRecorte`).
+ *
+ * O DIA DE FALTA APARECE NA LISTA
+ * O resumo cobraria faltas em dias que a lista não mostra, porque ela só tem
+ * os dias com batida ou ausência. Por isso cada dia que `saldo.ts` marcou com
+ * falta entra na ordem das datas (`juntarDiasDeFalta`), na linha compacta do
+ * painel da pessoa (`DiaSemBatida`), sem os botões de quem administra: "Sem
+ * batida" e "Previsto 8h00 · Falta · Saldo −8h00". Hoje, o futuro, o dia sem
+ * jornada e o dia antes do primeiro dia cobrado nunca são falta, e não
+ * entram. Como a falta depende do saldo, ela só aparece com as três leituras
+ * certas, e o aviso de "nenhuma batida" espera por elas para não piscar antes
+ * da lista.
  *
  * NENHUMA DATA É DEDUZIDA DO APARELHO
  * O agrupamento por dia usa `dia_civil`, que o banco calculou em
@@ -107,6 +149,33 @@ async function buscarPedidosDoMes(
       pedidos: [],
       nomes: new Map(),
       erro: falha instanceof Error ? falha.message : 'Não deu para carregar seus pedidos deste mês.',
+    }
+  }
+}
+
+/** O que `regrasDoSaldo` lê: a configuração do ponto e a ficha ligada à conta. */
+interface BaseDoSaldo {
+  /** Nula = a linha de configuração não existe, e o saldo não aparece. */
+  configuracao: ConfiguracaoDoPonto | null
+  /** Nula = nenhuma ficha ligada a esta conta: nenhum dia é cobrado. */
+  ficha: FichaDoFuncionario | null
+}
+
+/**
+ * A configuração e a ficha da pessoa, para as regras do saldo. O erro volta
+ * como valor. `lerFichas` devolve, a quem bate ponto, só a própria ficha (a
+ * RLS esconde as outras), e a quem administra, todas: por isso a ficha é
+ * escolhida pela conta.
+ */
+async function buscarBaseDoSaldo(usuarioId: string): Promise<{ base: BaseDoSaldo | null; erro: string | null }> {
+  try {
+    const [configuracao, fichas] = await Promise.all([lerConfiguracao(), lerFichas()])
+    const ficha = fichas.find((umaFicha) => mesmaConta(umaFicha.usuarioId, usuarioId)) ?? null
+    return { base: { configuracao, ficha }, erro: null }
+  } catch (falha) {
+    return {
+      base: null,
+      erro: falha instanceof Error ? falha.message : 'Não deu para carregar a sua jornada.',
     }
   }
 }
@@ -157,7 +226,13 @@ export function Espelho() {
 
   const [ausencias, setAusencias] = useState<Ausencia[]>([])
   const [erroDasAusencias, setErroDasAusencias] = useState<string | null>(null)
+  /** As ausências DESTE mês já chegaram: antes disso o saldo não aparece (o atestado viraria débito). */
+  const [ausenciasProntas, setAusenciasProntas] = useState(false)
   const [atestadoAberto, setAtestadoAberto] = useState<Ausencia | null>(null)
+
+  /** A configuração e a ficha, para as regras do saldo: `undefined` enquanto a leitura não voltou. */
+  const [baseDoSaldo, setBaseDoSaldo] = useState<BaseDoSaldo | null | undefined>(undefined)
+  const [erroDoSaldo, setErroDoSaldo] = useState<string | null>(null)
 
   useEffect(() => {
     if (!usuarioId) return
@@ -196,11 +271,26 @@ export function Espelho() {
       if (!vivo) return
       setAusencias(resultado.ausencias)
       setErroDasAusencias(resultado.erro)
+      setAusenciasProntas(true)
     })
     return () => {
       vivo = false
     }
   }, [usuarioId, mes, tentativa])
+
+  // A configuração e a ficha não mudam de um mês para o outro: uma leitura por conta (e por "Tentar de novo").
+  useEffect(() => {
+    if (!usuarioId) return
+    let vivo = true
+    void buscarBaseDoSaldo(usuarioId).then((resultado) => {
+      if (!vivo) return
+      setBaseDoSaldo(resultado.base)
+      setErroDoSaldo(resultado.erro)
+    })
+    return () => {
+      vivo = false
+    }
+  }, [usuarioId, tentativa])
 
   const espelho: EspelhoDoMes = useMemo(() => montarEspelho(mes, batidas), [mes, batidas])
   /*
@@ -217,11 +307,59 @@ export function Espelho() {
     () => ausenciasPorDia(ausencias, { inicio: primeiroDiaDoMes(mes), fim: ultimoDiaDoMes(mes) }),
     [ausencias, mes],
   )
-  const diasDaLista = useMemo(
-    () => juntarDiasEAusencias(espelho.dias, ausenciasDoDia),
-    [espelho.dias, ausenciasDoDia],
-  )
   const ausenciasAtivas = useMemo(() => ausencias.filter(ehAtiva), [ausencias])
+
+  /*
+   * AS REGRAS DO SALDO, montadas por `regrasDoSaldo` e só por ela: a
+   * configuração e a ficha desta conta, e hoje. Nulas sem a configuração.
+   */
+  const regras = useMemo(
+    () => (baseDoSaldo?.configuracao ? regrasDoSaldo(baseDoSaldo.configuracao, baseDoSaldo.ficha, hoje) : null),
+    [baseDoSaldo, hoje],
+  )
+  /*
+   * O SALDO DO MÊS, da mesma conta do painel da pessoa. Nulo enquanto falta
+   * alguma das três leituras, ou quando uma delas falhou.
+   */
+  const saldoDoMes = useMemo(() => {
+    if (!regras || carregando || erro || !ausenciasProntas || erroDasAusencias) return null
+    return calcularSaldoDoMes(mes, batidas, ausencias, regras)
+  }, [regras, carregando, erro, ausenciasProntas, erroDasAusencias, mes, batidas, ausencias])
+  const saldoPorDia = useMemo(
+    () => new Map<string, SaldoDoDia>((saldoDoMes?.dias ?? []).map((dia) => [dia.dia, dia])),
+    [saldoDoMes],
+  )
+  /** O abonado que soma no total do mês, da mesma conta do painel da pessoa. */
+  const abonadoDoMes = useMemo(() => abonadoNoTotal(saldoDoMes?.dias ?? []), [saldoDoMes])
+  /** Os dias com batida ou ausência e, com o saldo na mão, os dias de falta, em ordem de data. */
+  const diasDaLista = useMemo(
+    () => juntarDiasDeFalta(juntarDiasEAusencias(espelho.dias, ausenciasDoDia), saldoDoMes?.dias ?? []),
+    [espelho.dias, ausenciasDoDia, saldoDoMes],
+  )
+  /**
+   * As leituras de que a lista depende já voltaram (a configuração, a ficha e
+   * as ausências, além das batidas): antes disso, um mês sem batida ainda pode
+   * ter falta.
+   */
+  const listaDecidida = baseDoSaldo !== undefined && ausenciasProntas
+  /** Onde o primeiro dia cobrado cai neste mês: a data que o resumo diz, ou o motivo de não haver saldo. */
+  const cobranca = regras ? cobrancaNoRecorte(regras.cobrancaDesde, primeiroDiaDoMes(mes), ultimoDiaDoMes(mes)) : null
+  /** Por que o saldo do mês não está no cartão, quando não está e não é só espera. */
+  const semSaldo = erroDoSaldo
+    ? 'O saldo deste mês não aparece porque a sua jornada não carregou.'
+    : erroDasAusencias
+      ? 'O saldo deste mês não aparece porque as suas ausências não carregaram.'
+      : baseDoSaldo === undefined
+        ? null
+        : !baseDoSaldo?.configuracao
+          ? 'O saldo aparece quando a jornada da empresa estiver cadastrada.'
+          : !baseDoSaldo.ficha
+            ? 'O saldo aparece quando a sua conta tiver uma ficha, com a data em que você passou a bater ponto aqui.'
+            : cobranca?.caso === 'sem_data'
+              ? 'O saldo aparece quando quem administra o ponto preencher, na sua ficha, a data em que você passou a bater ponto aqui.'
+              : cobranca?.caso === 'depois'
+                ? `Saldo calculado a partir de ${dataBrasileira(cobranca.desde)}: nenhum dia deste mês entra no saldo.`
+                : null
   const aprovadores = useMemo(() => aprovadoresDosPedidos(pedidos, nomes), [pedidos, nomes])
 
   /** Troca de mês: limpa a lista para não mostrar agosto sob o rótulo de julho. */
@@ -232,6 +370,7 @@ export function Espelho() {
     setErroDosPedidos(null)
     setAusencias([])
     setErroDasAusencias(null)
+    setAusenciasProntas(false)
     setAtestadoAberto(null)
     setErro(null)
     setCarregando(true)
@@ -299,8 +438,11 @@ export function Espelho() {
           Total do mês
         </p>
         <p className="mt-2 font-mono text-4xl font-medium tracking-tight text-plat tabular-nums">
-          {carregando || erro ? '—' : formatarDuracao(espelho.minutos)}
+          {carregando || erro ? '—' : formatarDuracao(espelho.minutos + abonadoDoMes)}
         </p>
+        {!carregando && !erro && (
+          <ComposicaoDoTotal trabalhado={espelho.minutos} abonado={abonadoDoMes} dias={saldoDoMes?.dias ?? []} />
+        )}
         {!carregando && !erro && (
           <p className="mt-2 text-xs leading-relaxed text-mute">
             {espelho.diasComBatida}{' '}
@@ -321,6 +463,17 @@ export function Espelho() {
             )}
           </p>
         )}
+        {saldoDoMes && !semSaldo && (
+          <ResumoDoSaldoNaTela
+            resumo={saldoDoMes.resumo}
+            rotulo="Saldo do mês"
+            comHoje={mes === mesCorrente}
+            aPartirDe={cobranca?.caso === 'no_meio' ? cobranca.desde : null}
+          />
+        )}
+        {!carregando && !erro && semSaldo && (
+          <p className="mt-4 border-t border-hair pt-4 text-xs leading-relaxed text-mute">{semSaldo}</p>
+        )}
       </Painel>
 
       <main className="mt-6 flex-1">
@@ -338,7 +491,7 @@ export function Espelho() {
 
         {/* Mês sem batida é estado vazio, não erro: quem entrou na empresa no
             meio do ano tem todos os meses anteriores assim, e eles estão certos. */}
-        {!erro && !carregando && diasDaLista.length === 0 && (
+        {!erro && !carregando && listaDecidida && diasDaLista.length === 0 && (
           <Painel className="text-center">
             <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-ink-2 text-mute">
               <CalendarOff size={22} aria-hidden="true" />
@@ -362,14 +515,19 @@ export function Espelho() {
                   aprovadores={aprovadores}
                   ausencias={doDia}
                   aoAbrirAtestado={setAtestadoAberto}
+                  saldo={saldoPorDia.get(diaCivil)}
                 />
-              ) : (
+              ) : doDia.length > 0 ? (
                 <DiaDeAusencia
                   key={diaCivil}
                   dia={diaCivil}
                   ausencias={doDia}
                   aoAbrirAtestado={setAtestadoAberto}
+                  saldo={saldoPorDia.get(diaCivil)}
                 />
+              ) : (
+                // O dia de falta (`juntarDiasDeFalta`): sem os botões de quem administra, que a RLS recusaria.
+                <DiaSemBatida key={diaCivil} dia={diaCivil} saldo={saldoPorDia.get(diaCivil)} />
               ),
             )}
           </ul>
@@ -403,8 +561,11 @@ export function Espelho() {
 
       <footer className="mt-10 text-center">
         <p className="text-[0.68rem] leading-relaxed text-faint">
-          As horas saem das suas batidas, com o horário oficial do ponto. Dia com batida faltando
-          não entra no total até ser corrigido.
+          As horas saem das suas batidas, com o horário oficial do ponto, mais as horas abonadas por
+          atestado ou falta justificada. Dia com batida faltando não entra no total até ser
+          corrigido, e o saldo dele fica pendente até lá. O saldo compara as horas com a sua
+          jornada: atestado médico e falta justificada abonam a parte da jornada que cobrem. O dia
+          da jornada que passou sem batida e sem abono aparece na lista como falta.
         </p>
       </footer>
 

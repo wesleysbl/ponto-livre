@@ -24,6 +24,8 @@ import {
 import type { DadosDaEmpresa } from './configuracao'
 import type { FichaDoFuncionario } from './cadastro'
 import { agruparPorDia, calcularDia } from './horas'
+import { JORNADA_SEMENTE, type Jornada } from './jornada'
+import { calcularSaldoDoPeriodo, regrasDoSaldo } from './saldo'
 import { comNomesDasFichas, nomeDeExibicao, SEM_NOME } from './nomes'
 
 /*
@@ -314,6 +316,36 @@ describe('"pode bater": ficha que libera OU super admin (o bate_ponto do banco d
     ])
     // A ficha que não libera ainda dá o nome: é de quem bateu.
     expect(funcionarios[0].nome).toBe('Fernanda Teles')
+  })
+
+  /*
+   * O SALDO DE CADA PESSOA LÊ A FICHA DA GENTE DO PAINEL: a data em que ela
+   * passou a bater ponto aqui e a jornada própria. O painel geral e a tela da
+   * pessoa montam as regras com `regrasDoSaldo` a partir desta ficha.
+   */
+  it('a gente do painel guarda, de cada ficha, a data e a jornada própria que o saldo lê', () => {
+    const propria: Jornada = ([1, 2, 3, 4, 5] as const).map((dia) => ({ dia, inicio: '09:00', fim: '15:00' }))
+    const gente = juntarGenteEFichas(
+      [conta('ana', 'Ana'), conta('bruna', 'Bruna')],
+      [
+        ficha('f1', 'ana', 'Ana Beatriz Rocha', { batePontoDesde: '2026-10-05', jornada: propria }),
+        ficha('f2', 'bruna', 'Bruna Costa'),
+      ],
+      HOJE,
+    )
+    const daAna = gente.fichas.find((umaFicha) => umaFicha.usuarioId === 'ana') ?? null
+    const daBruna = gente.fichas.find((umaFicha) => umaFicha.usuarioId === 'bruna') ?? null
+    expect(daAna).toMatchObject({ batePontoDesde: '2026-10-05', jornada: propria })
+    expect(daBruna).toMatchObject({ batePontoDesde: null, jornada: null })
+
+    const configuracao = { jornada: JORNADA_SEMENTE, toleranciaMinutos: 10, saldoAPartirDe: '2026-10-01' }
+    const regrasDaAna = regrasDoSaldo(configuracao, daAna, HOJE)
+    expect(regrasDaAna).toMatchObject({ cobrancaDesde: '2026-10-05', jornadaPropria: propria })
+    // A jornada própria vale no saldo: 6 h previstas na segunda 05/10, e não as 8 h da empresa.
+    const ana = calcularSaldoDoPeriodo('2026-10-05', '2026-10-05', [], [], regrasDaAna)
+    expect(ana.dias[0]).toMatchObject({ previsto: 360, falta: true })
+    // Sem a data na ficha, nenhum dia é cobrado.
+    expect(regrasDoSaldo(configuracao, daBruna, HOJE).cobrancaDesde).toBeNull()
   })
 
   it('no painel, quem bate pela ficha não vai para o fim da lista com quem não pode', () => {

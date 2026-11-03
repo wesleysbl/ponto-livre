@@ -15,6 +15,7 @@ import {
   calcularSaldoDoDia,
   calcularSaldoDoMes,
   calcularSaldoDoPeriodo,
+  cobrancaNoRecorte,
   estadoDoDia,
   formatarSaldo,
   horasDoDia,
@@ -1107,5 +1108,42 @@ describe('regrasDoSaldo: o primeiro dia cobrado é a mais nova entre a ficha e a
     expect(novembro.dias.find((dia) => dia.dia === '2026-11-02')).toMatchObject({ estado: 'fora', motivoDeFora: 'antes_da_cobranca', falta: false })
     expect(novembro.dias.find((dia) => dia.dia === hoje)).toMatchObject({ estado: 'em_andamento', previsto: 480, falta: false, debito: 0 })
     expect(novembro.resumo.faltas).toBe(0)
+  })
+})
+
+describe('cobrancaNoRecorte: desde quando o saldo conta no mês ou no período da tela', () => {
+  const OUTUBRO = ['2026-10-01', '2026-10-31'] as const
+
+  it('sem a data na ficha, nenhum dia é cobrado', () => {
+    expect(cobrancaNoRecorte(null, ...OUTUBRO)).toEqual({ caso: 'sem_data' })
+  })
+
+  it('o recorte começa no primeiro dia cobrado ou depois dele: nada a avisar', () => {
+    expect(cobrancaNoRecorte('2026-10-01', ...OUTUBRO)).toEqual({ caso: 'desde_o_inicio' })
+    expect(cobrancaNoRecorte('2025-03-10', ...OUTUBRO)).toEqual({ caso: 'desde_o_inicio' })
+  })
+
+  it('o recorte começa antes: a tela diz a data, do dia seguinte ao início até o último dia', () => {
+    expect(cobrancaNoRecorte('2026-10-02', ...OUTUBRO)).toEqual({ caso: 'no_meio', desde: '2026-10-02' })
+    expect(cobrancaNoRecorte('2026-10-31', ...OUTUBRO)).toEqual({ caso: 'no_meio', desde: '2026-10-31' })
+  })
+
+  it('o recorte acaba antes do primeiro dia cobrado: nenhum dia dele conta', () => {
+    expect(cobrancaNoRecorte('2026-11-01', ...OUTUBRO)).toEqual({ caso: 'depois', desde: '2026-11-01' })
+  })
+
+  it('a configuração gravada no meio do mês: o mês da atualização diz a data, o anterior não conta nada', () => {
+    const regras = regrasDoSaldo(
+      { jornada: JORNADA_SEMENTE, toleranciaMinutos: 10, saldoAPartirDe: '2026-11-03' },
+      { jornada: null, batePontoDesde: '2020-03-02' },
+      '2026-11-20',
+    )
+    expect(cobrancaNoRecorte(regras.cobrancaDesde, '2026-11-01', '2026-11-30')).toEqual({ caso: 'no_meio', desde: '2026-11-03' })
+    expect(cobrancaNoRecorte(regras.cobrancaDesde, ...OUTUBRO)).toEqual({ caso: 'depois', desde: '2026-11-03' })
+    // E a conta concorda: em novembro, os dias 1 e 2 ficam fora; em outubro, todos.
+    const novembro = calcularSaldoDoMes('2026-11', [], [], regras)
+    expect(novembro.dias.find((dia) => dia.dia === '2026-11-02')).toMatchObject({ estado: 'fora', motivoDeFora: 'antes_da_cobranca' })
+    expect(novembro.dias.find((dia) => dia.dia === '2026-11-03')).toMatchObject({ estado: 'cobranca', falta: true })
+    expect(calcularSaldoDoMes('2026-10', [], [], regras).resumo.diasDeCobranca).toBe(0)
   })
 })

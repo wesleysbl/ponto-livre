@@ -1,10 +1,12 @@
 import { AlertTriangle, Camera, MapPin } from 'lucide-react'
 import { formatarDistancia, formatarHora, ROTULO_CURTO, type Batida } from '../lib/batidas'
-import { formatarDuracao, rotuloDoDia, type DiaDoEspelho as Dia } from '../lib/horas'
+import { rotuloDoDia, type DiaDoEspelho as Dia } from '../lib/horas'
 import { MarcaDeAjuste, MarcaDeAtraso, MarcaSemLocalizacao } from './MarcaDaBatida'
 import { MarcaDeAusencia } from './DiaDeAusencia'
+import { LinhaDoSaldo, TotalDoDia } from './SaldoDoDia'
 import { Etiqueta } from './ui'
 import type { Ausencia } from '../lib/ausencias'
+import type { SaldoDoDia } from '../lib/saldo'
 
 /*
  * Um dia do espelho: o cabeçalho com a data e o total, e as batidas embaixo.
@@ -28,6 +30,11 @@ import type { Ausencia } from '../lib/ausencias'
  * quando alguém toca — carregar 22 dias de miniaturas privadas exigiria uma URL
  * assinada por foto e derrubaria o 4G de quem só quer conferir horário.
  *
+ * O SALDO DO DIA vem embaixo do cabeçalho, pronto de `saldo.ts`
+ * (`LinhaDoSaldo`): previsto, abonado e saldo. O total do cabeçalho soma o
+ * abono do dia, com a conta embaixo (`TotalDoDia`), a mesma do painel de quem
+ * administra; as batidas continuam todas listadas, com ou sem atestado no dia.
+ *
  * A BATIDA SEM LOCALIZAÇÃO ganha a etiqueta neutra
  * "sem localização" no lugar de "no local" / a distância: o GPS não
  * respondeu, e ela saiu com a selfie e o PIN.
@@ -38,9 +45,18 @@ interface Props {
   aoAbrirSelfie: (batida: Batida) => void
   /** `pedido_id -> quem aprovou`, para a marca da batida em atraso. */
   aprovadores?: ReadonlyMap<string, string | null>
-  /** Ausências ativas que cobrem este dia: a marca aparece, as horas não mudam. */
+  /**
+   * Ausências ativas que cobrem este dia: a marca aparece, e o que elas
+   * abonam soma no total do dia (pelo `saldo`).
+   */
   ausencias?: readonly Ausencia[]
   aoAbrirAtestado?: (ausencia: Ausencia) => void
+  /**
+   * O saldo do dia, de `saldo.ts`: previsto, abonado e saldo, embaixo do
+   * cabeçalho, e o abono no total. Sem ele (as regras não carregaram), o
+   * cartão mostra só as batidas e o trabalhado.
+   */
+  saldo?: SaldoDoDia
   /** Este dia é hoje: ímpar, ele está "Em andamento", e não incompleto. */
   ehHoje?: boolean
 }
@@ -52,6 +68,7 @@ export function DiaDoEspelho({
   ausencias = [],
   aoAbrirAtestado,
   ehHoje = false,
+  saldo,
 }: Props) {
   const emAndamento = dia.incompleto && ehHoje
   const faltaBatida = dia.incompleto && !ehHoje
@@ -73,11 +90,7 @@ export function DiaDoEspelho({
           </span>
         )}
         {emAndamento && <Etiqueta tom="neutro">Em andamento</Etiqueta>}
-        {!dia.incompleto && (
-          <span className="shrink-0 font-mono text-lg text-plat tabular-nums">
-            {formatarDuracao(dia.minutos)}
-          </span>
-        )}
+        {!dia.incompleto && <TotalDoDia trabalhado={dia.minutos} saldo={saldo} />}
       </div>
 
       {faltaBatida && (
@@ -92,7 +105,9 @@ export function DiaDoEspelho({
         </p>
       )}
 
-      <MarcaDeAusencia ausencias={ausencias} aoAbrirAtestado={aoAbrirAtestado} />
+      {saldo && <LinhaDoSaldo saldo={saldo} />}
+
+      <MarcaDeAusencia ausencias={ausencias} aoAbrirAtestado={aoAbrirAtestado} coberturas={saldo?.coberturas} />
 
       <ul className="mt-1 divide-y divide-hair border-t border-hair">
         {dia.batidas.map((batida) => {

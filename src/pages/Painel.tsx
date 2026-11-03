@@ -26,10 +26,19 @@ import { Aviso, Botao, Painel as Cartao, Etiqueta, Pagina } from '../components/
 import { lerBatidasDoPeriodo, lerGenteDoPainel } from '../lib/admin'
 import { lerConfiguracao } from '../lib/administracao'
 import type { PedidoDeAtraso } from '../lib/atraso'
-import type { DadosDaEmpresa } from '../lib/configuracao'
+import type { ConfiguracaoDoPonto } from '../lib/configuracao'
 import { gerarCsvDoPeriodo, nomeDoArquivoCsv } from '../lib/csv'
 import { lerAprovadoresDoPeriodo, lerContasComPedidoNoPeriodo } from '../lib/pedidos'
 import { ausenciasPorPessoa, type Ausencia } from '../lib/ausencias'
+import { mesmaConta } from '../lib/cadastro'
+import {
+  abonadoNoTotal,
+  calcularSaldoDoPeriodo,
+  regrasDoSaldo,
+  rotuloDoAbono,
+  type SaldoDoDia,
+} from '../lib/saldo'
+import { ComposicaoDoTotal } from '../components/SaldoDoDia'
 import { descreverForaDaPessoa, descreverSemLocalizacaoDaPessoa } from '../lib/coordenada'
 import { lerAusenciasDoPeriodo } from '../lib/faltas'
 import { baixarCsv } from '../lib/download'
@@ -100,6 +109,14 @@ import {
  * falta resolver — pedidos, dias com batida faltando (com o link direto para o
  * dia) e o cabeçalho da folha incompleto (`pendenciasDoFechamento`). A
  * contagem dos pedidos sai da própria caixa (`aoLer`), sem uma segunda leitura.
+ *
+ * O TOTAL DE CADA PESSOA SOMA O ATESTADO
+ * O número de cada cartão e o total do período são o trabalhado mais o
+ * abonado (`abonadoNoTotal`), com o abono escrito embaixo ("+ 8h00 de
+ * atestado"). O abono sai da mesma conta da tela da pessoa
+ * (`calcularSaldoDoPeriodo`, com as regras de `regrasDoSaldo`: a configuração
+ * e a ficha ligada a cada conta), então o cartão e a tela dela dizem o mesmo
+ * total. Sem a configuração, o total é só o trabalhado.
  */
 
 interface Dados {
@@ -120,12 +137,14 @@ interface Dados {
   /** Quem aprovou cada batida em atraso. De melhor esforço: vazio não é erro. */
   aprovadores: Map<string, string | null>
   /**
-   * Os dados da empresa, para o bloco "Antes de fechar" dizer se o cabeçalho
-   * da folha está completo. De melhor esforço: `undefined` quando a
-   * leitura falhou, e aí o bloco não fala do cabeçalho — o painel não morre
-   * por causa dele.
+   * A configuração do ponto: os dados da empresa, para o bloco "Antes de
+   * fechar" dizer se o cabeçalho da folha está completo, e a jornada, a
+   * tolerância e a "Saldo calculado a partir de", para o abono de cada pessoa.
+   * De melhor esforço: `undefined` quando a leitura falhou, e aí o bloco não
+   * fala do cabeçalho e os totais são só o trabalhado (o painel não morre por
+   * causa dela).
    */
-  empresa: DadosDaEmpresa | null | undefined
+  empresa: ConfiguracaoDoPonto | null | undefined
   erro: string | null
 }
 
@@ -243,6 +262,38 @@ export function Painel() {
     [dados.gente, linhas],
   )
   const total = useMemo(() => totalizarPainel(linhas), [linhas])
+
+  /*
+   * O SALDO DE CADA PESSOA, da mesma conta da tela dela: as regras de
+   * `regrasDoSaldo` (a configuração e a ficha ligada à conta) e as ausências
+   * dela no período. Serve ao total de cada cartão e do período, que somam o
+   * abono. Sem a configuração, nada: os totais são só o trabalhado.
+   */
+  const saldosPorPessoa = useMemo(() => {
+    const mapa = new Map<string, SaldoDoDia<BatidaDoAdmin>[]>()
+    const configuracao = dados.empresa
+    if (!configuracao) return mapa
+    for (const linha of linhas) {
+      const usuarioId = linha.funcionario.usuarioId
+      const ficha = dados.gente.fichas.find((umaFicha) => mesmaConta(umaFicha.usuarioId, usuarioId)) ?? null
+      mapa.set(
+        usuarioId,
+        calcularSaldoDoPeriodo(
+          periodo.inicio,
+          periodo.fim,
+          linha.dias.flatMap((dia) => dia.batidas),
+          dados.ausencias.filter((ausencia) => ausencia.usuario_id === usuarioId),
+          regrasDoSaldo(configuracao, ficha, hoje),
+        ).dias,
+      )
+    }
+    return mapa
+  }, [linhas, dados.empresa, dados.gente.fichas, dados.ausencias, periodo.inicio, periodo.fim, hoje])
+  /** O abonado que soma no total do período, de todas as pessoas da lista. */
+  const abonadoDoPeriodo = useMemo(
+    () => [...saldosPorPessoa.values()].reduce((soma, dias) => soma + abonadoNoTotal(dias), 0),
+    [saldosPorPessoa],
+  )
   const fechamento = useMemo(
     () =>
       pendenciasDoFechamento({
@@ -367,8 +418,15 @@ export function Painel() {
             Total do período
           </p>
           <p className="mt-2 font-mono text-4xl font-medium tracking-tight text-plat tabular-nums">
-            {carregando || dados.erro ? '—' : formatarDuracao(total.minutos)}
+            {carregando || dados.erro ? '—' : formatarDuracao(total.minutos + abonadoDoPeriodo)}
           </p>
+          {!carregando && !dados.erro && (
+            <ComposicaoDoTotal
+              trabalhado={total.minutos}
+              abonado={abonadoDoPeriodo}
+              dias={[...saldosPorPessoa.values()].flat()}
+            />
+          )}
           {!carregando && !dados.erro && (
             <p className="mt-2 text-xs leading-relaxed text-mute">
               {total.pessoas} {total.pessoas === 1 ? 'pessoa bateu' : 'pessoas bateram'} ponto ·{' '}
@@ -476,7 +534,12 @@ export function Painel() {
                  tela: cartão em toda largura, e não tabela. */
               <ul className="grid grid-cols-1 gap-2 lg:grid-cols-2">
                 {visiveis.map((linha) => (
-                  <LinhaDeFuncionario key={linha.funcionario.usuarioId} linha={linha} periodo={periodo} />
+                  <LinhaDeFuncionario
+                    key={linha.funcionario.usuarioId}
+                    linha={linha}
+                    periodo={periodo}
+                    saldos={saldosPorPessoa.get(linha.funcionario.usuarioId)}
+                  />
                 ))}
               </ul>
             )}
@@ -486,17 +549,33 @@ export function Painel() {
 
       <footer className="mt-10 text-center">
         <p className="mx-auto max-w-2xl text-[0.68rem] leading-relaxed text-faint">
-          As horas saem das batidas com o horário do servidor, pela mesma conta que o funcionário
-          vê no próprio espelho. Dia com número ímpar de batidas conta zero até ser corrigido.
+          As horas saem das batidas com o horário do servidor, mais as horas abonadas por atestado ou
+          falta justificada, pela mesma conta que o funcionário vê no próprio espelho. Dia com número
+          ímpar de batidas conta zero até ser corrigido.
         </p>
       </footer>
     </Pagina>
   )
 }
 
-/** O cartão de uma pessoa. Exportado para o teste das telas. */
-export function LinhaDeFuncionario({ linha, periodo }: { linha: LinhaDoPainel; periodo: Periodo }) {
+/**
+ * O cartão de uma pessoa. Exportado para o teste das telas.
+ *
+ * `saldos` são os dias do saldo dela no período (de `saldosPorPessoa`): o
+ * total do cartão soma o abono deles e diz quanto foi. Sem eles, o total é só
+ * o trabalhado.
+ */
+export function LinhaDeFuncionario({
+  linha,
+  periodo,
+  saldos = [],
+}: {
+  linha: LinhaDoPainel
+  periodo: Periodo
+  saldos?: readonly SaldoDoDia[]
+}) {
   const { funcionario, resumo, ajustes, atrasos } = linha
+  const abonado = abonadoNoTotal(saldos)
   const diasDeAusencia = linha.ausencias.size
   const fora = descreverForaDaPessoa(linha.localizacao)
   const semLocalizacao = descreverSemLocalizacaoDaPessoa(linha.localizacao)
@@ -591,11 +670,16 @@ export function LinhaDeFuncionario({ linha, periodo }: { linha: LinhaDoPainel; p
 
         <div className="shrink-0 text-right">
           <p className="font-mono text-lg text-plat tabular-nums">
-            {formatarDuracao(resumo.minutos)}
+            {formatarDuracao(resumo.minutos + abonado)}
           </p>
           <p className="mt-0.5 font-mono text-[0.62rem] text-faint tabular-nums">
             {resumo.diasComBatida} {resumo.diasComBatida === 1 ? 'dia' : 'dias'}
           </p>
+          {abonado > 0 && (
+            <p className="mt-0.5 font-mono text-[0.62rem] text-mute tabular-nums">
+              + {formatarDuracao(abonado)} {rotuloDoAbono(saldos)}
+            </p>
+          )}
         </div>
 
         <ChevronRight size={16} aria-hidden="true" className="shrink-0 text-mute" />
