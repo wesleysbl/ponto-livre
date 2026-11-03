@@ -550,7 +550,11 @@ export function resumirPessoas(pessoas: readonly PessoaDaAdministracao[]): {
   bloqueados: number
   /** Fichas ATIVAS sem conta: a pendência de vínculo. */
   fichasSemConta: number
-  /** Fichas ativas sem "passou a bater ponto aqui em". Pendência de registro: a data não muda a batida nem a folha. */
+  /**
+   * Fichas ativas sem "passou a bater ponto aqui em". A data não muda a batida,
+   * mas decide o saldo: sem ela nenhum dia da pessoa é cobrado (nem previsto,
+   * nem falta). A pendência é preencher a data.
+   */
   naoBatemAqui: number
 } {
   const fichasAtivas = pessoas
