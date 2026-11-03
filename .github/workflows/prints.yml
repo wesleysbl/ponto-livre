@@ -1,0 +1,287 @@
+# ---------------------------------------------------------------------------
+# PRINTS DA DOCUMENTAÇÃO, SÓ QUANDO ALGUÉM PEDE
+#
+# Gera as imagens de `docs/imagens/` (as telas do README e do manual, a capa e
+# os passos do guia de cadastro) e roda as provas de ponta a ponta, num
+# Supabase local inteiro que nasce e morre no runner. As imagens saem num
+# pacote da execução ("prints-da-documentacao", na página da execução), para
+# baixar, conferir uma por uma e commitar à mão. Nada é gravado no
+# repositório.
+#
+# Dois trabalhos, em paralelo:
+#   • prints: sobe o Supabase local (banco, login, API, arquivos e a função de
+#     contas; o `supabase start` aplica as migrations), roda `PRINTS=1 npm run
+#     e2e` numa instalação vazia (as provas de ponta a ponta e, junto, os
+#     prints do cadastro, que querem o banco zerado), semeia a demonstração do
+#     zero (`npm run demo:semear -- --zerar`) e roda `npm run demo:prints`, que
+#     confere a lista fixa de imagens. No fim, guarda as imagens;
+#   • segredos: o mesmo gitleaks do "Conferir", no histórico inteiro.
+#
+# COMO SE ACIONA, E POR QUE DE DOIS JEITOS
+# A automação não roda sozinha: nem em push, nem em pull request aberto ou
+# atualizado. Ela é pesada (baixa as imagens do Supabase inteiro e leva uns
+# 15 minutos), e só serve quando as telas mudam.
+#   • O botão "Run workflow", na aba Actions (`workflow_dispatch`). O GitHub
+#     só aciona assim um workflow que já está no branch padrão (ver
+#     "workflow_dispatch" em "Events that trigger workflows", na documentação
+#     do GitHub Actions): num branch que ainda não entrou na `main`, o botão
+#     não serve.
+#   • O rótulo `prints` num pull request (`pull_request` com `types:
+#     [labeled]`), que funciona antes do merge, com o código do pull request.
+#     Pôr o rótulo aciona uma vez; para acionar de novo, tire e ponha. Outro
+#     rótulo também cria uma execução, que termina na hora, com os dois
+#     trabalhos pulados. Só quem tem acesso de triagem ao repositório põe
+#     rótulo.
+#
+# POR QUE SEM SEGREDOS
+# O Supabase do runner é descartável e local, com as credenciais locais
+# padrão do CLI, que não abrem nada fora dele. Elas não aparecem no log: a
+# saída do `supabase start` vai para /dev/null, e os passos e os scripts leem
+# as chaves de `npx supabase status` sem mostrá-las. O app aponta para esse
+# Supabase, o gitleaks vem do release público, e nada fala com o Supabase
+# hospedado nem com a hospedagem. Sem segredo, a automação roda igual num pull
+# request vindo de fork.
+#
+# O HORÁRIO DAS IMAGENS
+# Várias telas mostram a hora: o comprovante da batida (com o horário do
+# servidor, que o banco carimba e a tela não finge), o dia de hoje no
+# espelho, o pedido de batida esquecida e a folha ("emitida em"). Para as
+# imagens saírem com cara de dia de trabalho a qualquer hora em que a
+# automação for acionada, o trabalho põe o relógio da máquina inteira (o
+# banco, o login, o Node e o Chrome leem o mesmo) no dia útil anterior ao do
+# acionamento, às 9h30 de Brasília, e deixa o tempo correr dali. Dia útil é
+# de segunda a sexta, sem os feriados nacionais de data fixa (os mesmos de
+# `demo/semear.mjs`). Acionada às 7h ou às 23h do mesmo dia, a automação tira
+# as mesmas telas, no mesmo dia e na mesma hora (a não ser pelos minutos que
+# cada passo leva).
+# O relógio sempre volta, nunca adianta. É voltar, e não adiantar, que não
+# atrapalha a conversa do runner com o GitHub: o token que o runner já tem
+# não parece vencido, e ele não pede outro com a data errada. A mudança vem
+# depois de baixar tudo o que vem da internet (as dependências, as imagens do
+# Supabase e a biblioteca da função de contas), e a hora certa volta antes de
+# guardar o pacote, pela conta do tempo desde que a máquina ligou
+# (`/proc/uptime`), que o relógio não mexe. Se outra coisa mexer no relógio
+# no meio do caminho, o trabalho reprova e o pacote não sai: as imagens
+# teriam horários misturados.
+# ---------------------------------------------------------------------------
+name: Prints da documentação
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+
+# Sem `concurrency`, de propósito: cada execução tem o próprio runner e o
+# próprio Supabase, e duas ao mesmo tempo não se atrapalham. Com um grupo, a
+# execução de um rótulo qualquer posto no meio de outra poderia cancelá-la.
+
+# Só leitura: esta automação não escreve nada no repositório.
+permissions:
+  contents: read
+
+jobs:
+  prints:
+    # O botão da aba Actions, ou o rótulo `prints` (ver o topo).
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'prints'
+    runs-on: ubuntu-latest
+    # Baixar as imagens do Supabase leva alguns minutos; as provas, a semente
+    # e os prints, uns dez. Um passo travado não pode segurar o runner pelas 6
+    # horas do limite padrão.
+    timeout-minutes: 45
+
+    permissions:
+      contents: read
+
+    env:
+      # O fuso do ponto. O app, a semente e os testes já fazem as contas em
+      # Brasília por conta própria; aqui é para o `date` dos passos do relógio
+      # e do log falar a mesma hora que as telas.
+      TZ: America/Sao_Paulo
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Preparar o Node
+        uses: actions/setup-node@v4
+        with:
+          # A mesma do "Conferir": o `engines` pede 22.12 ou mais.
+          node-version: 22
+          cache: npm
+
+      - name: Instalar as dependências
+        # O Supabase CLI e o Playwright vêm daqui, nas versões do
+        # package-lock.json. O navegador é o Google Chrome que o runner já
+        # tem (`channel: 'chrome'` no `playwright.config.ts`): nada se baixa.
+        run: npm ci
+
+      - name: Tirar as imagens que vieram com o código
+        # O pacote leva só o que esta execução tirou: uma imagem que o roteiro
+        # deixasse de tirar não pode ir no pacote com a cara de nova.
+        run: rm -f docs/imagens/*.png docs/imagens/cadastro/*.png
+
+      - name: Subir o Supabase local
+        # O que o app e os testes usam: banco, login (gotrue), API (postgrest),
+        # arquivos (storage-api), o gateway (kong), a função de contas
+        # (edge-runtime) e o servidor de e-mail (mailpit), que o login espera
+        # encontrar. Fora o que nada aqui usa: o tempo real, o redimensionador
+        # de imagens, o painel e os registros. Os nomes são os de `npx supabase
+        # start --help` do CLI 2.122. A saída padrão traz as chaves locais, e
+        # vai para /dev/null; o progresso e os erros saem no log.
+        run: >-
+          npx supabase start
+          --exclude realtime,imgproxy,postgres-meta,studio,logflare,vector,supavisor
+          > /dev/null
+
+      - name: Acordar a função de contas
+        # A função baixa a biblioteca do Supabase (o `npm:` do `index.ts`) no
+        # primeiro pedido, e a guarda num volume do Docker, que sobrevive ao
+        # `db reset` da semente. Este é o primeiro pedido, antes de o relógio
+        # mudar: com o relógio no passado, o download poderia esbarrar num
+        # certificado emitido "depois de agora". Sem sessão, a função responde
+        # 401 com o código `sem_sessao`, e isso só acontece com ela carregada
+        # inteira. A chave pública local vem de `supabase status` e não é
+        # impressa.
+        run: |
+          estado=$(npx supabase status -o env)
+          url=$(printf '%s\n' "$estado" | sed -n -E 's/^API_URL="?([^"]*)"?$/\1/p')
+          chave=$(printf '%s\n' "$estado" | sed -n -E 's/^PUBLISHABLE_KEY="?([^"]*)"?$/\1/p')
+          for tentativa in 1 2 3 4 5 6; do
+            if curl -s --max-time 120 -X POST "$url/functions/v1/ponto-contas" \
+                 -H "apikey: $chave" -H 'Content-Type: application/json' -d '{}' | grep -q '"sem_sessao"'; then
+              echo "A função de contas carregou e respondeu sem sessão, como devia (tentativa $tentativa)."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::A função de contas não respondeu como devia em seis tentativas."
+          exit 1
+
+      - name: Pôr o relógio no dia útil anterior, às 9h30 de Brasília
+        # Ver "O HORÁRIO DAS IMAGENS", no topo. As contas de data partem do
+        # meio-dia de hoje, e Brasília não tem horário de verão: tirar 24 horas
+        # do meio-dia sempre cai no dia de antes.
+        run: |
+          agora=$(date +%s)
+          meio_dia=$(date -d "$(date -d "@$agora" +%F) 12:00" +%s)
+          alvo=""
+          for atras in $(seq 1 10); do
+            dia=$(date -d "@$(( meio_dia - atras * 86400 ))" +%F)
+            case "$(date -d "$dia" +%u)" in 6 | 7) continue ;; esac
+            case "${dia:5}" in 01-01 | 04-21 | 05-01 | 09-07 | 10-12 | 11-02 | 11-15 | 11-20 | 12-25) continue ;; esac
+            alvo=$(date -d "$dia 09:30" +%s)
+            break
+          done
+          if [ -z "$alvo" ]; then
+            echo "::error::Nenhum dia útil nos últimos dez dias: a conta do calendário deste passo está errada."
+            exit 1
+          fi
+          # O sincronizador de hora desfaria a mudança em minutos.
+          sudo timedatectl set-ntp false || true
+          sudo systemctl stop chrony.service systemd-timesyncd.service 2> /dev/null || true
+          # Para o passo que devolve a hora: a hora certa e a falsa, cada uma
+          # com o tempo desde que a máquina ligou, lido no mesmo instante.
+          certo=$(date +%s)
+          desde_antes=$(cut -d' ' -f1 /proc/uptime)
+          sudo date -s "@$alvo" > /dev/null
+          desde_depois=$(cut -d' ' -f1 /proc/uptime)
+          printf '%s %s %s %s\n' "$certo" "$desde_antes" "$alvo" "$desde_depois" > "$RUNNER_TEMP/relogio"
+          echo "O relógio do runner foi de $(date -d "@$certo" '+%d/%m/%Y %H:%M') para $(date '+%d/%m/%Y %H:%M') (Brasília)."
+
+      - name: Provas de ponta a ponta e os prints do cadastro
+        # Numa instalação vazia, como o guia de cadastro pede (`e2e/prints.ts`):
+        # o `supabase start` acabou de aplicar as migrations, e ninguém gravou
+        # nada. Os dois projetos do `playwright.config.ts`: o `app` (o
+        # cadastro, da instalação vazia à primeira batida, e a função de
+        # contas pelo caminho real) e o `csp` (o build de produção sob a
+        # política de conteúdo). Com PRINTS=1, o cadastro grava um print por
+        # passo em `docs/imagens/cadastro/`.
+        env:
+          PRINTS: '1'
+        run: npm run e2e
+
+      - name: Semear a demonstração, do zero
+        # O `--zerar` apaga o banco local (as contas das provas inclusive) e
+        # o recria com as migrations; a semente grava o elenco fictício e o mês
+        # de batidas. As contas e o PIN que ela mostra no fim são os de
+        # demonstração, públicos de propósito (ver o cabeçalho de
+        # `demo/semear.mjs`).
+        run: npm run demo:semear -- --zerar
+
+      - name: Prints da demonstração
+        # O roteiro `e2e/demonstracao.spec.ts`, e no fim a conferência das
+        # imagens da lista de `demo/prints.mjs` (todas desta execução, cada
+        # PNG só com imagem).
+        run: npm run demo:prints
+
+      - name: Devolver o relógio do runner
+        # Sempre, mesmo depois de uma falha: o pacote, o cache do npm e o fim
+        # do trabalho falam com o GitHub na hora certa. E a conferência: o
+        # relógio falso tem de ter andado junto com o tempo desde que a
+        # máquina ligou; se pulou, alguém mexeu nele no meio do caminho.
+        if: always()
+        run: |
+          if [ ! -f "$RUNNER_TEMP/relogio" ]; then
+            echo "O relógio não tinha mudado."
+            exit 0
+          fi
+          read -r antes desde_antes alvo desde_depois < "$RUNNER_TEMP/relogio"
+          desde_fim=$(cut -d' ' -f1 /proc/uptime)
+          certo=$(awk -v a="$antes" -v d="$desde_antes" -v f="$desde_fim" 'BEGIN { printf "%.0f", a + (f - d) }')
+          esperado=$(awk -v a="$alvo" -v d="$desde_depois" -v f="$desde_fim" 'BEGIN { printf "%.0f", a + (f - d) }')
+          desvio=$(( $(date +%s) - esperado ))
+          sudo date -s "@$certo" > /dev/null
+          sudo timedatectl set-ntp true || true
+          echo "O relógio do runner voltou para $(date '+%d/%m/%Y %H:%M') (Brasília); desvio do relógio falso: ${desvio} s."
+          if [ "${desvio#-}" -gt 60 ]; then
+            echo "::error::O relógio do runner mudou sozinho durante a automação (${desvio} s fora do esperado): as imagens podem ter horários misturados."
+            exit 1
+          fi
+
+      - name: Listar as imagens
+        run: find docs/imagens -name '*.png' | sort
+
+      - name: Guardar as imagens
+        # O pacote da execução, para baixar pela página dela (ou por `gh run
+        # download`). Ele some sozinho depois do prazo: as imagens que valem são
+        # as que alguém conferiu e commitou.
+        uses: actions/upload-artifact@v4
+        with:
+          name: prints-da-documentacao
+          path: docs/imagens/
+          if-no-files-found: error
+          retention-days: 14
+
+  segredos:
+    # O mesmo trabalho do "Conferir" (ver lá): o gitleaks no histórico
+    # inteiro. Aqui também, para a automação acionada à mão dizer sozinha que
+    # o código de onde as imagens saíram está limpo.
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'prints'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Baixar o código, com o histórico inteiro
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Baixar o gitleaks, com a soma conferida
+        # A mesma versão e a mesma soma do "Conferir" (`conferir.yml`): troque
+        # as duas juntas.
+        env:
+          VERSAO: 8.30.1
+          SOMA: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          pacote="gitleaks_${VERSAO}_linux_x64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$pacote" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VERSAO}/${pacote}"
+          echo "${SOMA}  $RUNNER_TEMP/$pacote" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$pacote" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" version
+
+      - name: Procurar segredos no histórico inteiro
+        run: '"$RUNNER_TEMP/gitleaks" git --redact --no-banner --verbose --exit-code 1 .'
