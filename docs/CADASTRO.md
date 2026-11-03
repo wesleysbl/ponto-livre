@@ -4,7 +4,7 @@
 
 Este guia mostra o cadastro inteiro numa instalação nova, com um print por passo: o super admin abre o ponto, cria a conta e a ficha de uma pessoa que bate ponto, faz uma pessoa do RH administrar, e as duas usam o app.
 
-Os prints são de verdade. Eles saem do teste automático de ponta a ponta (`PRINTS=1 npm run e2e`), com pessoas fictícias e com a câmera e o GPS simulados. O número no meio dos e-mails (como em `ana+261024061409@example.com`, o e-mail da Ana nos prints) é a marca de cada execução do teste. Na sua instalação, os e-mails são os do seu time.
+Os prints são de verdade. Eles saem do teste automático de ponta a ponta (`PRINTS=1 npm run e2e`), com pessoas fictícias e com a câmera e o GPS simulados. O número no meio dos e-mails (como em `ana+261030123008@example.com`, o e-mail da Ana nos prints) é a marca de cada execução do teste. Na sua instalação, os e-mails são os do seu time.
 
 | Quem | No exemplo |
 | --- | --- |
@@ -77,11 +77,15 @@ Embaixo da lista de pessoas ficam três blocos, cada um com o seu botão de salv
 
 - **Local de trabalho**: nome, latitude, longitude e raio. A batida dentro do raio sai "no local"; fora dele, "fora do local". A distância não bloqueia nada. O jeito mais certo de medir é pelo celular, de dentro do local, com **Usar a localização deste aparelho**.
 - **Dados da empresa**: razão social, nome de fantasia, CNPJ, endereço, cidade e UF. É o cabeçalho da folha que a pessoa assina. Campo em branco imprime em branco.
-- **Regras de jornada**: a carga diária, a tolerância e a janela que recusa batida repetida.
+- **Regras de jornada**: a jornada da empresa, a tolerância, a janela que recusa batida repetida e a data **Saldo calculado a partir de**.
 
 ![Administração com o local de trabalho, os dados da empresa e as regras de jornada salvos](imagens/cadastro/05-administracao-empresa-jornada-e-local.png)
 
 No exemplo, o CNPJ ficou em branco de propósito, e o app avisa: "A folha de ponto vai imprimir com o cabeçalho incompleto: falta CNPJ".
+
+**A jornada da empresa** é o editor da semana, de segunda a domingo, cada dia com até dois blocos de horário e o total na hora. Ele já vem preenchido com a jornada de partida (de segunda a sexta, das 08:00 às 12:00 e das 13:00 às 17:00; sábado e domingo sem jornada): troque pelos horários da sua empresa. A carga diária não se digita: o banco a calcula ao salvar (é o maior total de um dia), e a mensagem diz quanto ficou ("A carga diária ficou em 8h00"). É dessa jornada que sai o saldo de horas de cada dia de quem não tem jornada própria na ficha.
+
+**Saldo calculado a partir de** nasce com o dia em que a configuração foi gravada pela primeira vez. O saldo de cada pessoa só conta a partir da mais nova entre esta data e a **Passou a bater ponto aqui em** da ficha. Numa instalação nova, deixe como está; se você quiser cobrar desde o começo do mês, recue a data. O que cada regra faz está no [manual](MANUAL.md#a-administração).
 
 ## Parte 2. A conta e a ficha da Ana
 
@@ -101,12 +105,14 @@ O exemplo usa **Sem ficha por enquanto** para mostrar cada peça separada. No di
 
 ### 7. Criar a ficha de RH
 
-**Nova ficha sem conta** abre a ficha do **Funcionário do ponto**: nome completo, CPF, matrícula, cargo, admissão, desligamento, CTPS e série, centro de custo e **Passou a bater ponto aqui em**. Da ficha, só o nome completo sai na folha que a pessoa assina; o resto fica guardado no cadastro. Clique em **Criar a ficha**.
+**Nova ficha sem conta** abre a ficha do **Funcionário do ponto**: nome completo, CPF, matrícula, cargo, admissão, desligamento, CTPS e série, centro de custo, **Passou a bater ponto aqui em** e a **Jornada prevista**. Da ficha, só o nome completo sai na folha que a pessoa assina; a data e a jornada decidem o saldo de horas; o resto fica guardado no cadastro. Clique em **Criar a ficha**.
 
-![Ficha nova da Ana Beatriz Rocha, com matrícula, cargo e admissão](imagens/cadastro/07-super-admin-cria-a-ficha-da-ana.png)
+![Ficha nova da Ana Beatriz Rocha, com matrícula, cargo, admissão, a data em que passou a bater ponto e a jornada da empresa](imagens/cadastro/07-super-admin-cria-a-ficha-da-ana.png)
 
 - Deixe em branco o que você não tem: campo vazio é melhor do que inventar.
-- **Passou a bater ponto aqui em** é a data em que a pessoa começou a bater ponto neste sistema. Preencha quando ela começar de verdade. Hoje o app guarda e mostra essa data na lista de pessoas; a folha ainda não aponta falta em dia sem batida.
+- **Passou a bater ponto aqui em** é a data em que a pessoa começou a bater ponto neste sistema. É dela que o saldo de horas começa (com a **Saldo calculado a partir de**, a mais nova das duas): antes dela, nenhum dia gera falta nem saldo, e em branco nenhum dia da pessoa é cobrado. A data não libera nem bloqueia a batida. No exemplo, a Ana começa hoje.
+- **Jornada desta pessoa**: **Usar a da empresa**, como a Ana, mostra a jornada da empresa de hoje, e a ficha acompanha quando ela mudar. **Jornada própria** abre o editor da semana, para quem trabalha em outro horário.
+- Quem cria a própria ficha (o super admin que também bate ponto, por exemplo) não grava nela a data nem a jornada própria: outra pessoa que administra o ponto faz isso depois. A regra é do banco: ninguém decide o próprio saldo.
 
 ### 8. Ligar a ficha à conta
 
@@ -184,7 +190,7 @@ A tela chama a Ana pelo nome da ficha, com o cargo em cima. O botão diz qual ba
 
 ### 19. O espelho do mês
 
-**Ver meu espelho do mês** abre **Seu mês**. O dia de hoje aparece **Em andamento**: as horas dele entram no total quando ela bater a próxima.
+**Ver meu espelho do mês** abre **Seu mês**. O dia de hoje aparece **Em andamento**: as horas dele entram no total quando ela bater a próxima, e no saldo quando o dia acabar. O resumo do saldo diz desde quando ele conta ("Saldo calculado a partir de", o dia de hoje no exemplo), e a linha do dia mostra o previsto da jornada.
 
 <img src="imagens/cadastro/19-ana-espelho-do-mes.png" width="300" alt="Espelho do mês com o dia de hoje em andamento">
 
@@ -212,13 +218,13 @@ O cartão da Ana marca **1 dia incompleto**, e o total diz "1 incompleto, fora d
 
 ### 23. Os dias da Ana
 
-O cartão abre todos os dias do período até hoje. Cada dia vazio tem **Inserir batida neste dia** e **Lançar falta neste dia**. O dia de hoje aparece **Em andamento**, com a entrada, o botão **Corrigir** e o ícone da câmera.
+O cartão abre todos os dias do período até hoje. Cada dia vazio tem **Inserir batida neste dia** e **Lançar falta neste dia**; o sábado e o domingo levam **fim de semana**, e o feriado nacional, **feriado**, com o nome. Os dias antes de hoje não viram falta: o saldo da Ana começa hoje. O dia de hoje aparece **Em andamento**, com a entrada, o botão **Corrigir** e a selfie em miniatura, e no alto fica o total e o saldo do período.
 
 ![Os dias da Ana, com o dia de hoje em andamento e a entrada com Corrigir](imagens/cadastro/23-rita-dia-da-ana.png)
 
 ### 24. A selfie da batida
 
-O ícone da câmera abre a selfie. O link da foto vale por 2 minutos e depois deixa de funcionar.
+A miniatura abre a selfie grande. O link da foto vale por 2 minutos e depois deixa de funcionar.
 
 ![Visor da selfie da entrada da Ana, com o aviso de que o link vale por 2 minutos](imagens/cadastro/24-rita-ve-a-selfie-da-ana.png)
 
