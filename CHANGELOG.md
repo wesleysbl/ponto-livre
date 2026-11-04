@@ -8,7 +8,7 @@ Enquanto a versão começar com 0, qualquer versão nova pode pedir cuidado na a
 
 Nada ainda.
 
-## 0.10.0-beta.1 - 2026-11-03
+## 0.10.0-beta.1 - 2026-11-04
 
 **Esta versão muda o banco.** Ela traz duas migrations novas, que se aplicam **antes** de publicar o app novo: veja [Como atualizar](#como-atualizar), no fim desta seção.
 
